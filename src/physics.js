@@ -12,10 +12,12 @@ function circleRect(px, pz, r, c) {
   return dx * dx + dz * dz < r * r;
 }
 
+const AXES = ['x', 'y', 'z'];
+
 function segAABB(a, b, c) {
   let t0 = 0;
   let t1 = 1;
-  for (const ax of ['x', 'y', 'z']) {
+  for (const ax of AXES) {
     const d = b[ax] - a[ax];
     if (Math.abs(d) < 1e-9) {
       if (a[ax] < c.min[ax] || a[ax] > c.max[ax]) return false;
@@ -38,10 +40,45 @@ function segAABB(a, b, c) {
  * height. Anything whose top is within `stepHeight` of the feet is walked
  * onto (stairs, sills, curbs); anything taller is a wall. Items are spheres.
  */
+const CELL = 3; // metres per broadphase grid cell
+const cellKey = (ix, iz) => (ix + 1024) * 4096 + (iz + 1024);
+
 export class Physics {
   constructor() {
     this.colliders = [];
     this.holes = [];
+    // Uniform XZ grid so each query only looks at nearby boxes.
+    this.grid = new Map();
+    this.stamp = 0;
+    this.nearBuf = [];
+  }
+
+  /**
+   * Colliders whose XZ footprint overlaps the rectangle. Returns a shared
+   * buffer that is only valid until the next call.
+   */
+  near(x0, z0, x1, z1) {
+    const out = this.nearBuf;
+    out.length = 0;
+    const stamp = ++this.stamp;
+    const ix0 = Math.floor(Math.min(x0, x1) / CELL);
+    const ix1 = Math.floor(Math.max(x0, x1) / CELL);
+    const iz0 = Math.floor(Math.min(z0, z1) / CELL);
+    const iz1 = Math.floor(Math.max(z0, z1) / CELL);
+    for (let ix = ix0; ix <= ix1; ix++) {
+      for (let iz = iz0; iz <= iz1; iz++) {
+        const cell = this.grid.get(cellKey(ix, iz));
+        if (!cell) continue;
+        for (let i = 0; i < cell.length; i++) {
+          const c = cell[i];
+          if (c.stamp !== stamp) {
+            c.stamp = stamp;
+            out.push(c);
+          }
+        }
+      }
+    }
+    return out;
   }
 
   add(x0, y0, z0, x1, y1, z1, kind = 'wall', ref = null) {
@@ -51,8 +88,20 @@ export class Physics {
       kind,
       ref,
       enabled: true,
+      stamp: 0,
     };
     this.colliders.push(c);
+    const ix0 = Math.floor(c.min.x / CELL);
+    const ix1 = Math.floor(c.max.x / CELL);
+    const iz0 = Math.floor(c.min.z / CELL);
+    const iz1 = Math.floor(c.max.z / CELL);
+    for (let ix = ix0; ix <= ix1; ix++) {
+      for (let iz = iz0; iz <= iz1; iz++) {
+        const k = cellKey(ix, iz);
+        if (!this.grid.has(k)) this.grid.set(k, []);
+        this.grid.get(k).push(c);
+      }
+    }
     return c;
   }
 
@@ -68,9 +117,10 @@ export class Physics {
     return 0;
   }
 
-  resolveHorizontal(ch, stepH) {
+  resolveHorizontal(ch, stepH, cands) {
     const r = ch.radius;
-    for (const c of this.colliders) {
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i];
       if (!c.enabled) continue;
       if (c.max.y <= ch.pos.y + stepH) continue;
       if (c.min.y >= ch.pos.y + ch.height) continue;
@@ -105,7 +155,7 @@ export class Physics {
   /** Is there solid overhead space blocking a character from growing to `height`? */
   blockedAbove(ch, height) {
     const r = ch.radius * 0.9;
-    for (const c of this.colliders) {
+    for (const c of this.near(ch.pos.x - r, ch.pos.z - r, ch.pos.x + r, ch.pos.z + r)) {
       if (!c.enabled) continue;
       if (c.min.y > ch.pos.y + ch.stepHeight && c.min.y < ch.pos.y + height && c.max.y > ch.pos.y + ch.stepHeight
         && circleRect(ch.pos.x, ch.pos.z, r, c)) return true;
@@ -117,11 +167,13 @@ export class Physics {
     const stepH = ch.stepHeight;
     const hs = Math.hypot(ch.vel.x, ch.vel.z) * dt;
     const n = Math.min(8, Math.max(1, Math.ceil(hs / 0.12)));
+    const m = ch.radius + hs + 0.1;
+    const cands = this.near(ch.pos.x - m, ch.pos.z - m, ch.pos.x + m, ch.pos.z + m);
     for (let i = 0; i < n; i++) {
       ch.pos.x += (ch.vel.x * dt) / n;
       ch.pos.z += (ch.vel.z * dt) / n;
-      this.resolveHorizontal(ch, stepH);
-      this.resolveHorizontal(ch, stepH);
+      this.resolveHorizontal(ch, stepH, cands);
+      this.resolveHorizontal(ch, stepH, cands);
     }
 
     const prevY = ch.pos.y;
@@ -130,7 +182,7 @@ export class Physics {
     const r = ch.radius * 0.85;
 
     if (ch.vel.y > 0) {
-      for (const c of this.colliders) {
+      for (const c of cands) {
         if (!c.enabled) continue;
         if (c.min.y > prevY + ch.height * 0.5 && c.min.y < ch.pos.y + ch.height && circleRect(ch.pos.x, ch.pos.z, r, c)) {
           ch.pos.y = c.min.y - ch.height;
@@ -141,7 +193,7 @@ export class Physics {
 
     const limit = prevY + stepH;
     let ground = -Infinity;
-    for (const c of this.colliders) {
+    for (const c of cands) {
       if (!c.enabled) continue;
       if (c.max.y <= limit && c.max.y > ground && circleRect(ch.pos.x, ch.pos.z, r, c)) ground = c.max.y;
     }
@@ -168,7 +220,7 @@ export class Physics {
   groundBelow(x, y, z) {
     let g = this.terrainAt(x, z);
     if (g > y) g = -Infinity;
-    for (const c of this.colliders) {
+    for (const c of this.near(x, z, x, z)) {
       if (!c.enabled) continue;
       if (c.max.y <= y && c.max.y > g && x >= c.min.x && x <= c.max.x && z >= c.min.z && z <= c.max.z) g = c.max.y;
     }
@@ -176,12 +228,40 @@ export class Physics {
   }
 
   segmentBlocked(a, b, filter) {
-    for (const c of this.colliders) {
+    for (const c of this.near(a.x, a.z, b.x, b.z)) {
       if (!c.enabled) continue;
       if (filter && !filter(c)) continue;
       if (segAABB(a, b, c)) return true;
     }
     return false;
+  }
+
+  /** Distance along a unit ray to the first matching collider (or Infinity). */
+  raycast(o, d, maxT, filter) {
+    let best = Infinity;
+    const cands = this.near(o.x, o.z, o.x + d.x * maxT, o.z + d.z * maxT);
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i];
+      if (!c.enabled || (filter && !filter(c))) continue;
+      let t0 = 0;
+      let t1 = maxT;
+      let hit = true;
+      for (const ax of AXES) {
+        const dv = d[ax];
+        if (Math.abs(dv) < 1e-9) {
+          if (o[ax] < c.min[ax] || o[ax] > c.max[ax]) { hit = false; break; }
+        } else {
+          let ta = (c.min[ax] - o[ax]) / dv;
+          let tb = (c.max[ax] - o[ax]) / dv;
+          if (ta > tb) [ta, tb] = [tb, ta];
+          if (ta > t0) t0 = ta;
+          if (tb < t1) t1 = tb;
+          if (t0 > t1) { hit = false; break; }
+        }
+      }
+      if (hit && t0 < best) best = t0;
+    }
+    return best;
   }
 
   /**
@@ -197,11 +277,13 @@ export class Physics {
     const r = it.radius;
     let contact = false;
     let maxImpact = 0;
+    const m = r + sp * dt + 0.3;
+    const cands = this.near(it.pos.x - m, it.pos.z - m, it.pos.x + m, it.pos.z + m);
 
     for (let s = 0; s < n; s++) {
       it.pos.addScaledVector(it.vel, h);
 
-      for (const c of this.colliders) {
+      for (const c of cands) {
         if (!c.enabled) continue;
         const p = it.pos;
         if (p.x < c.min.x - r || p.x > c.max.x + r || p.y < c.min.y - r || p.y > c.max.y + r

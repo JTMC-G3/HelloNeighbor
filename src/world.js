@@ -235,7 +235,7 @@ export function buildWorld(scene, physics) {
   const windows = [];
   const items = [];
   const dynamicMeshes = [];
-  const flicker = [];
+  const lamps = [];
 
   const solid = (mat, x0, y0, z0, x1, y1, z1, kind = 'wall') => {
     B.box(mat, x0, y0, z0, x1, y1, z1);
@@ -249,24 +249,12 @@ export function buildWorld(scene, physics) {
     const h = top - bottom;
     const cx = axis === 'x' ? (a + b) / 2 : c;
     const cz = axis === 'x' ? c : (a + b) / 2;
-    const group = new THREE.Group();
-    group.position.set(cx, (bottom + top) / 2, cz);
-    if (axis === 'z') group.rotation.y = Math.PI / 2;
-    const pane = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.02), M.glass);
-    pane.renderOrder = 2;
-    group.add(pane);
-    const bar = M.trim;
-    const mv = new THREE.Mesh(new THREE.BoxGeometry(0.04, h, 0.04), bar);
-    const mh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.04, 0.04), bar);
-    group.add(mv, mh);
-    scene.add(group);
-
     const collider = axis === 'x'
       ? physics.add(a, bottom, c - 0.03, b, top, c + 0.03, 'glass')
       : physics.add(c - 0.03, bottom, a, c + 0.03, top, b, 'glass');
+    // Glass and glazing bars are drawn with shared InstancedMeshes (see below).
     const win = {
-      group,
-      pane,
+      index: windows.length,
       collider,
       broken: false,
       center: new THREE.Vector3(cx, (bottom + top) / 2, cz),
@@ -275,9 +263,7 @@ export function buildWorld(scene, physics) {
       axis,
     };
     collider.ref = win;
-    pane.userData.window = win;
     windows.push(win);
-    dynamicMeshes.push(pane);
 
     // frame + sill (static)
     const o = t / 2 + 0.03;
@@ -731,10 +717,7 @@ export function buildWorld(scene, physics) {
   }
   function ceilingLamp(x, y, z, intensity = 9, color = 0xffe2b0, distance = 13) {
     deco(M.lampGlow, x - 0.18, y - 0.12, z - 0.18, x + 0.18, y, z + 0.18);
-    const l = new THREE.PointLight(color, intensity, distance, 1.6);
-    l.position.set(x, y - 0.3, z);
-    scene.add(l);
-    return l;
+    lamps.push({ pos: new THREE.Vector3(x, y - 0.3, z), color, intensity, distance, decay: 1.6, flicker: false });
   }
   function picture(axis, c, a, y, w, h, mat, facing) {
     const d = 0.03 * facing;
@@ -851,13 +834,8 @@ export function buildWorld(scene, physics) {
   dB.rotation.z = 0.08;
   scene.add(dA, dB);
   deco(M.lampGlow, -3.1, -0.25, -12.1, -2.9, -0.05, -11.9);
-  const bulb = new THREE.PointLight(0xffd59a, 10, 12, 1.6);
-  bulb.position.set(-3, -0.5, -12);
-  scene.add(bulb);
-  flicker.push(bulb);
-  const stairBulb = new THREE.PointLight(0xffc27a, 3, 6, 1.8);
-  stairBulb.position.set(-1.4, -1, -16.5);
-  scene.add(stairBulb);
+  lamps.push({ pos: new THREE.Vector3(-3, -0.5, -12), color: 0xffd59a, intensity: 10, distance: 12, decay: 1.6, flicker: true });
+  lamps.push({ pos: new THREE.Vector3(-1.4, -1, -16.5), color: 0xffc27a, intensity: 3, distance: 6, decay: 1.8, flicker: false });
 
   // =================================================================
   // Neighbor's yard
@@ -1043,38 +1021,108 @@ export function buildWorld(scene, physics) {
   sun.target.position.set(0, 0, -10);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
+  // Tight box around the two houses: sharper shadows from a smaller map.
   const sc = sun.shadow.camera;
-  sc.left = -34;
-  sc.right = 34;
-  sc.top = 34;
-  sc.bottom = -34;
+  sc.left = -28;
+  sc.right = 28;
+  sc.top = 28;
+  sc.bottom = -28;
   sc.near = 5;
   sc.far = 110;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);
 
+  // Windows: every pane / glazing bar shares one instanced draw call.
+  const unit = new THREE.Matrix4();
+  const panes = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 0.02), M.glass, windows.length);
+  const barsV = new THREE.InstancedMesh(new THREE.BoxGeometry(0.04, 1, 0.04), M.trim, windows.length);
+  const barsH = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.04, 0.04), M.trim, windows.length);
+  panes.renderOrder = 2;
+  const q = new THREE.Quaternion();
+  const s3 = new THREE.Vector3();
+  for (const w of windows) {
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), w.axis === 'z' ? Math.PI / 2 : 0);
+    panes.setMatrixAt(w.index, unit.compose(w.center, q, s3.set(w.w, w.h, 1)));
+    barsV.setMatrixAt(w.index, unit.compose(w.center, q, s3.set(1, w.h, 1)));
+    barsH.setMatrixAt(w.index, unit.compose(w.center, q, s3.set(w.w, 1, 1)));
+    w.hide = () => {
+      unit.makeScale(0, 0, 0);
+      for (const im of [panes, barsV, barsH]) {
+        im.setMatrixAt(w.index, unit);
+        im.instanceMatrix.needsUpdate = true;
+      }
+    };
+  }
+  for (const im of [panes, barsV, barsH]) {
+    im.frustumCulled = false;
+    scene.add(im);
+  }
+
+  // Room lights: instead of ~12 point lights (each one multiplies the cost of
+  // every pixel), a small fixed pool of lights follows the camera and takes
+  // on the nearest lamps. Changing the pool size recompiles shaders once.
+  const slots = [];
+  function setLightSlots(n) {
+    while (slots.length > n) scene.remove(slots.pop());
+    while (slots.length < n) {
+      const l = new THREE.PointLight(0xffffff, 0, 10, 1.6);
+      l.userData.lamp = null;
+      scene.add(l);
+      slots.push(l);
+    }
+    assignTimer = 0;
+  }
+  let assignTimer = 0;
+  let flickerValue = 10;
+  const ranked = lamps.slice();
+  function updateLights(dt, cam) {
+    assignTimer -= dt;
+    if (assignTimer <= 0) {
+      assignTimer = 0.2;
+      // Lamps on another floor are heavily penalised (floors block light).
+      const score = (l) => (l.pos.x - cam.x) ** 2 + (l.pos.z - cam.z) ** 2 + ((l.pos.y - cam.y) * 4) ** 2;
+      ranked.sort((a, b) => score(a) - score(b));
+      slots.forEach((slot, i) => {
+        const lamp = ranked[i];
+        slot.userData.lamp = lamp;
+        slot.position.copy(lamp.pos);
+        slot.color.setHex(lamp.color);
+        slot.distance = lamp.distance;
+        slot.decay = lamp.decay;
+      });
+    }
+    // Lamps only matter indoors; outside the sun dominates (and they'd leak through walls).
+    const inside = cam.y < 0 || (cam.x > HX0 - 0.3 && cam.x < HX1 + 0.3 && cam.z > HZ0 - 0.3 && cam.z < HZ1 + 0.3);
+    for (const slot of slots) {
+      const lamp = slot.userData.lamp;
+      slot.intensity = !inside || !lamp ? 0 : lamp.flicker ? flickerValue : lamp.intensity;
+    }
+  }
+
   // =================================================================
   // Runtime
   // =================================================================
   let staticTimer = 0;
   let flickerTimer = 0;
-  function update(dt) {
+  function update(dt, cam) {
     for (const d of doors) d.update(dt);
+    // The TV static only needs animating when you can possibly see it.
     staticTimer -= dt;
-    if (staticTimer <= 0) {
+    if (staticTimer <= 0 && cam && cam.y < 0.6 && cam.z < -9 && cam.z > -22) {
       T.updateStatic();
       staticTimer = 0.07;
     }
     flickerTimer -= dt;
     if (flickerTimer <= 0) {
-      for (const l of flicker) l.intensity = Math.random() < 0.15 ? 0.6 : 8 + Math.random() * 4;
+      flickerValue = Math.random() < 0.15 ? 0.6 : 8 + Math.random() * 4;
       flickerTimer = 0.05 + Math.random() * 0.12;
     }
+    if (cam) updateLights(dt, cam);
+    const glow = 0.35 + 0.3 * Math.sin(performance.now() * 0.004);
     for (const it of items) {
-      if (it.key && it.mesh.userData.glow) {
-        it.mesh.userData.glow.emissiveIntensity = 0.35 + 0.3 * Math.sin(performance.now() * 0.004);
-      }
+      const gm = it.key && it.mesh.userData.glowMesh;
+      if (gm) gm.material.emissiveIntensity = glow;
     }
   }
 
@@ -1086,6 +1134,9 @@ export function buildWorld(scene, physics) {
     items,
     staticMeshes,
     dynamicMeshes,
+    sun,
+    textureList: Object.values(T).filter((t) => t && t.isTexture),
+    setLightSlots,
     update,
     doorById: (id) => doors.find((d) => d.id === id),
   };

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { bakeChildren } from './quality.js';
 
 const WALK = 2.3;
 const RUN = 5.05;
@@ -87,6 +88,9 @@ function buildModel(textures) {
     add(head, new THREE.SphereGeometry(0.04, 8, 6), skin, 0.205 * sx, 0.23, 0.02);
   }
   add(head, new THREE.BoxGeometry(0.3, 0.1, 0.05), hair, 0, 0.22, -0.19);
+
+  // ~40 primitives -> ~8 draw calls: merge the parts of each joint.
+  for (const joint of [...legs, ...arms, torso, head]) bakeChildren(joint);
 
   return { root, body, legs, arms, head, torso };
 }

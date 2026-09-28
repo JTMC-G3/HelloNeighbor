@@ -1,12 +1,15 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Physics } from './physics.js';
 import { buildWorld, SPAWN } from './world.js';
 import { Nav } from './nav.js';
 import { Player } from './player.js';
 import { Neighbor } from './neighbor.js';
 import { Sound } from './audio.js';
+import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality } from './quality.js';
 
 const REACH = 2.5;
+const notDoor = (c) => c.kind !== 'door';
 const $ = (id) => document.getElementById(id);
 
 class Game {
@@ -19,12 +22,22 @@ class Game {
     this.flags = { sawBasementLock: false, sawBedroomLock: false };
     this.pointerLockFailed = false;
 
+    // ---- graphics settings
+    this.detected = detectQuality();
+    this.qualitySetting = loadSetting('quality', 'auto');
+    this.quality = this.qualitySetting === 'auto' ? this.detected : this.qualitySetting;
+    if (!PRESETS[this.quality]) this.quality = this.detected;
+    this.showFps = loadSetting('fps', '0') === '1';
+
     // ---- renderer / scene
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // MSAA is expensive on integrated GPUs, so only the High preset asks for it
+    // (it can only be chosen when the WebGL context is created).
+    const renderer = new THREE.WebGLRenderer({ antialias: this.quality === 'high', powerPreference: 'high-performance' });
+    renderer.setPixelRatio(1);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.autoUpdate = false;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     $('app').prepend(renderer.domElement);
@@ -57,18 +70,24 @@ class Game {
     this.player.spawn(SPAWN, 0);
 
     this.raycaster = new THREE.Raycaster();
-    this.rayTargets = [...this.world.staticMeshes, ...this.world.dynamicMeshes];
+    // Only door panels are raycast as meshes; walls/glass use the (much cheaper) collision boxes.
+    this.rayTargets = this.world.dynamicMeshes;
     this.target = null;
     this.shards = [];
     this.shardGeo = new THREE.BufferGeometry();
     this.shardGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.07, 0.02, 0, 0.02, 0.09, 0], 3));
     this.shardGeo.computeVertexNormals();
-    this.shardMat = new THREE.MeshStandardMaterial({ color: 0xd8f0ff, roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
+    this.shardMat = new THREE.MeshLambertMaterial({ color: 0xd8f0ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
 
     const bad = this.nav.validate();
     if (bad.length) console.warn('[nav] blocked edges:', bad);
 
+    this.frameCount = 0;
+    this.perf = { acc: 0, frames: 0, calm: 0, cooldown: 0, fpsAcc: 0, fpsFrames: 0 };
+    this.applyQuality(this.quality);
+
     this.bindInput();
+    this.bindSettings();
     this.updateObjective();
     window.addEventListener('resize', () => this.onResize());
 
@@ -95,22 +114,147 @@ class Game {
     const sky = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
     this.scene.add(sky);
     this.sky = sky;
-    // A few puffy clouds.
-    const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.92 });
-    const cg = new THREE.SphereGeometry(1, 12, 8);
+    // A few puffy clouds, merged into a single mesh (one draw call).
+    const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+    const puffs = [];
+    const cloud = new THREE.Object3D();
+    const puff = new THREE.Object3D();
     for (let i = 0; i < 14; i++) {
-      const cloud = new THREE.Group();
       const a = (i / 14) * Math.PI * 2 + Math.random() * 0.3;
       const r = 160 + Math.random() * 60;
       cloud.position.set(Math.cos(a) * r, 55 + Math.random() * 35, Math.sin(a) * r);
+      cloud.lookAt(0, cloud.position.y, 0);
+      cloud.updateMatrix();
       for (let k = 0; k < 5; k++) {
-        const puff = new THREE.Mesh(cg, cloudMat);
         puff.position.set((k - 2) * 7 + Math.random() * 4, Math.random() * 4, Math.random() * 6);
         puff.scale.set(9 + Math.random() * 6, 5 + Math.random() * 3, 7 + Math.random() * 4);
-        cloud.add(puff);
+        puff.updateMatrix();
+        const g = new THREE.SphereGeometry(1, 10, 6);
+        g.applyMatrix4(puff.matrix).applyMatrix4(cloud.matrix);
+        puffs.push(g);
       }
-      cloud.lookAt(0, cloud.position.y, 0);
-      this.scene.add(cloud);
+    }
+    const clouds = new THREE.Mesh(mergeGeometries(puffs, false), cloudMat);
+    clouds.frustumCulled = false;
+    sky.add(clouds);
+  }
+
+  // ============================================================= graphics
+  applyQuality(name) {
+    const q = PRESETS[name];
+    this.quality = name;
+    this.preset = q;
+    const r = this.renderer;
+    const dpr = window.devicePixelRatio || 1;
+    this.maxScale = Math.min(dpr, q.maxScale);
+    this.minScale = Math.min(this.maxScale, q.minScale);
+    this.scale = this.maxScale;
+    r.setPixelRatio(this.scale);
+    r.setSize(window.innerWidth, window.innerHeight);
+
+    setMaterialQuality(this.scene, q.standard);
+    this.world.setLightSlots(q.lights);
+
+    const sun = this.world.sun;
+    const wantShadows = q.shadows;
+    if (r.shadowMap.enabled !== wantShadows) {
+      r.shadowMap.enabled = wantShadows;
+      this.scene.traverse((o) => {
+        if (o.material) o.material.needsUpdate = true;
+      });
+    }
+    if (sun.shadow.mapSize.x !== q.shadowSize) {
+      sun.shadow.mapSize.set(q.shadowSize, q.shadowSize);
+      if (sun.shadow.map) {
+        sun.shadow.map.dispose();
+        sun.shadow.map = null;
+      }
+    }
+    r.shadowMap.needsUpdate = true;
+
+    for (const t of this.world.textureList) {
+      if (t.anisotropy !== q.aniso) {
+        t.anisotropy = q.aniso;
+        t.needsUpdate = true;
+      }
+    }
+    this.scene.fog.far = q.fogFar;
+    this.scene.fog.near = q.fogFar * 0.4;
+    this.camera.far = q.fogFar + 20;
+    this.camera.updateProjectionMatrix();
+    // The sky dome must stay inside the far plane.
+    this.sky.scale.setScalar(Math.min(1, (q.fogFar + 10) / 300));
+  }
+
+  bindSettings() {
+    const selects = document.querySelectorAll('.qualitySel');
+    const checks = document.querySelectorAll('.fpsChk');
+    const autoLabel = `Auto (${PRESETS[this.detected].label})`;
+    for (const sel of selects) {
+      sel.querySelector('option[value="auto"]').textContent = autoLabel;
+      sel.value = this.qualitySetting;
+      sel.addEventListener('change', () => {
+        this.qualitySetting = sel.value;
+        saveSetting('quality', sel.value);
+        for (const other of selects) other.value = sel.value;
+        const next = sel.value === 'auto' ? this.detected : sel.value;
+        if ((next === 'high') !== (this.quality === 'high')) {
+          this.toast('Anti-aliasing changes apply after a restart.');
+        }
+        this.applyQuality(next);
+      });
+    }
+    for (const chk of checks) {
+      chk.checked = this.showFps;
+      chk.addEventListener('change', () => {
+        this.showFps = chk.checked;
+        saveSetting('fps', chk.checked ? '1' : '0');
+        for (const other of checks) other.checked = chk.checked;
+        $('fps').classList.toggle('hidden', !this.showFps);
+      });
+    }
+    $('fps').classList.toggle('hidden', !this.showFps);
+  }
+
+  /**
+   * Dynamic resolution: if frames take too long, render fewer pixels (the
+   * browser upscales the canvas); creep back up when there is headroom.
+   */
+  updatePerformance(dt) {
+    const p = this.perf;
+    p.fpsAcc += dt;
+    p.fpsFrames++;
+    if (p.fpsAcc >= 0.5) {
+      if (this.showFps) $('fps').textContent = `${Math.round(p.fpsFrames / p.fpsAcc)} FPS · ${Math.round(this.scale * 100)}%`;
+      p.fpsAcc = 0;
+      p.fpsFrames = 0;
+    }
+    if (this.state !== 'playing' && this.state !== 'menu') return;
+    p.acc += dt;
+    p.frames++;
+    p.cooldown -= dt;
+    if (p.acc < 1) return;
+    const avg = (p.acc / p.frames) * 1000;
+    p.acc = 0;
+    p.frames = 0;
+    let next = this.scale;
+    if (avg > 24 && this.scale > this.minScale) {
+      next = Math.max(this.minScale, this.scale - 0.1);
+      p.cooldown = 8; // don't bounce straight back up
+      p.calm = 0;
+    } else if (avg < 18) {
+      p.calm++;
+      if (p.calm >= 3 && p.cooldown <= 0 && this.scale < this.maxScale) {
+        next = Math.min(this.maxScale, this.scale + 0.05);
+        p.calm = 0;
+      }
+    } else {
+      p.calm = 0;
+    }
+    if (next !== this.scale) {
+      this.scale = next;
+      this.renderer.setPixelRatio(next);
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
   }
 
@@ -223,6 +367,7 @@ class Game {
   }
 
   onResize() {
+    this.stillFrame = false;
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -284,9 +429,10 @@ class Game {
     const dir = this.camera.getWorldDirection(new THREE.Vector3());
     this.raycaster.set(eye, dir);
     this.raycaster.far = REACH + 1;
-    const hits = this.raycaster.intersectObjects(this.rayTargets, false);
-    const first = hits.find((h) => h.object.visible);
-    const wallT = first ? first.distance : Infinity;
+    const doorHit = this.raycaster.intersectObjects(this.rayTargets, false)[0];
+    const blockT = this.physics.raycast(eye, dir, REACH + 1, notDoor);
+    const doorT = doorHit && doorHit.distance < blockT + 0.05 ? doorHit.distance : Infinity;
+    const wallT = Math.min(blockT, doorT);
 
     let best = null;
     let bestScore = Infinity;
@@ -306,7 +452,7 @@ class Game {
       }
     }
     if (best) return { item: best };
-    if (first && first.distance <= REACH && first.object.userData.door) return { door: first.object.userData.door };
+    if (doorT <= REACH) return { door: doorHit.object.userData.door };
     return null;
   }
 
@@ -323,8 +469,11 @@ class Game {
       else if (d.locked && !d.open) html = `<kbd>E</kbd> ${d.name} <span style="color:#ff8a80">(locked)</span>`;
       else html = `<kbd>E</kbd> ${d.open ? 'Close' : 'Open'} ${d.name}`;
     }
-    if (el.innerHTML !== html) el.innerHTML = html;
-    $('crosshair').classList.toggle('active', !!t);
+    if (this.promptHtml !== html) {
+      this.promptHtml = html;
+      el.innerHTML = html;
+      $('crosshair').classList.toggle('active', !!t);
+    }
   }
 
   interact() {
@@ -440,7 +589,7 @@ class Game {
   breakWindow(win, dir) {
     if (win.broken) return;
     win.broken = true;
-    win.group.visible = false;
+    win.hide();
     win.collider.enabled = false;
     this.sound.glass(win.center);
     this.emitNoise(win.center, 30);
@@ -626,12 +775,18 @@ class Game {
   }
 
   updateHUD() {
+    // Only touch the DOM when something visibly changed (avoids per-frame layout work).
     const n = this.neighbor;
-    const eye = $('eye');
     const chase = n.state === 'chase';
-    eye.classList.toggle('alert', n.awareness > 0.05 || chase);
+    const alert = n.awareness > 0.05 || chase;
+    const fill = Math.round((chase ? 1 : n.awareness) * 50) * 2;
+    const key = `${alert}|${chase}|${fill}`;
+    if (key === this.hudKey) return;
+    this.hudKey = key;
+    const eye = $('eye');
+    eye.classList.toggle('alert', alert);
     eye.classList.toggle('chase', chase);
-    $('eyeFill').style.width = `${Math.round((chase ? 1 : n.awareness) * 100)}%`;
+    $('eyeFill').style.width = `${fill}%`;
   }
 
   // ================================================================ loop
@@ -647,12 +802,12 @@ class Game {
       const a = Math.sin(this.time * 0.12) * 0.5;
       this.camera.position.set(Math.sin(a) * 9, 2.4, 6 + Math.cos(a) * 2);
       this.camera.lookAt(0, 4, -16);
-      this.world.update(dt);
+      this.world.update(dt, this.camera.position);
       this.neighbor.update(dt, p, this);
     } else if (this.state === 'playing') {
       this.playTime += dt;
       p.update(dt, (pos, r) => this.emitNoise(pos, r));
-      this.world.update(dt);
+      this.world.update(dt, this.camera.position);
       this.updateItems(dt);
       for (const nz of this.noises) {
         if (nz.pos.distanceTo(this.neighbor.pos) < nz.radius) this.neighbor.hear(nz.pos, this);
@@ -670,14 +825,12 @@ class Game {
         $('fade').style.opacity = String(this.fadeOut);
       }
     } else if (this.state === 'caught') {
-      this.world.update(dt);
+      this.world.update(dt, this.camera.position);
       this.neighbor.update(dt, p, this);
       this.updateCaught(dt);
     } else if (this.state === 'ending') {
-      this.world.update(dt);
+      this.world.update(dt, this.camera.position);
       this.updateEnding(dt);
-    } else if (this.state === 'won') {
-      this.world.update(dt);
     }
 
     if (this.state !== 'menu') this.sound.setListener(this.camera.position, p.yaw);
@@ -685,7 +838,20 @@ class Game {
     if (this.state === 'playing') this.sound.ambience(dt, p.pos.y < 0.2 && p.pos.y > -0.5);
     this.updateShards(dt);
     this.sky.position.copy(this.camera.position);
+    // Nothing moves while paused or on the end screen: draw one frame, then idle the GPU.
+    if (this.state === 'paused' || this.state === 'won') {
+      if (this.stillFrame) return;
+      this.stillFrame = true;
+    } else {
+      this.stillFrame = false;
+    }
+    // The sun never moves, so shadows only need refreshing for moving things
+    // (the neighbor, doors, items) and not necessarily every frame.
+    this.frameCount++;
+    const every = this.preset.shadowEvery;
+    if (every > 0 && this.frameCount % every === 0) this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
+    this.updatePerformance(dt);
   }
 }
 

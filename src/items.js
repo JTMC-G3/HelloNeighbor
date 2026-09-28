@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { bakeChildren } from './quality.js';
 
 // Pick-up-able, throwable props. Each is simulated as a sphere.
 
@@ -119,6 +120,9 @@ export function makeItemMesh(type, textures) {
     default:
       add(new THREE.BoxGeometry(0.2, 0.2, 0.2), std(0xff00ff));
   }
+  const glow = g.userData.glow;
+  bakeChildren(g);
+  if (glow) g.userData.glowMesh = g.children.find((c) => c.material === glow);
   return g;
 }
 

@@ -24,6 +24,7 @@
         <div id="toasts"></div>
       </div>
 
+      <div id="fps" class="hidden"></div>
       <div id="fade"></div>
       <div id="caughtText" class="hidden">GOT YOU!</div>
 
@@ -37,6 +38,17 @@
             what he's hiding &mdash; without getting caught.
           </p>
           <button id="playBtn" class="btn">Play</button>
+          <div class="settings">
+            <label>Graphics
+              <select class="qualitySel">
+                <option value="auto">Auto</option>
+                <option value="low">Low (Chromebook)</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" class="fpsChk" /> Show FPS</label>
+          </div>
           <div class="controls">
             <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</div>
             <div><kbd>Mouse</kbd> Look</div>
@@ -67,6 +79,17 @@
           <label class="slider">Volume
             <input id="vol" type="range" min="0" max="1" step="0.05" value="0.8" />
           </label>
+          <div class="settings stacked">
+            <label>Graphics
+              <select class="qualitySel">
+                <option value="auto">Auto</option>
+                <option value="low">Low (Chromebook)</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" class="fpsChk" /> Show FPS</label>
+          </div>
           <button id="restartBtn" class="btn secondary">Restart</button>
           <p id="lockNote" class="tip hidden">
             Your browser blocked mouse capture here (common in embedded previews such as the VS Code

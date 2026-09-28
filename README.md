@@ -85,6 +85,29 @@ Click the game to capture the mouse.
 
 ---
 
+## ⚙️ Performance / Chromebooks
+
+The game is tuned to run on school Chromebooks. Pick a preset under **Graphics** on the
+title screen or in the pause menu. **Auto** chooses one from your device and remembers what
+you pick.
+
+| Preset | Meant for | What it does |
+| --- | --- | --- |
+| **Low (Chromebook)** | Chromebooks, low-end laptops | Simple lighting, no real-time shadows, 2 active room lights, renders at ≤85% resolution |
+| **Medium** | Typical laptops | Simple lighting, 1024px shadows refreshed every 3rd frame, 3 room lights |
+| **High** | Gaming PCs | Full PBR materials, anti-aliasing, 2048px shadows every frame, 4 room lights |
+
+On every preset the game lowers its render resolution when the frame rate drops, then
+raises it again when there's headroom. Turn on **Show FPS** to see the frame rate and
+current resolution.
+
+If it's still slow on a Chromebook:
+* Play in a normal Chrome tab (not an embedded preview) and close other tabs.
+* Keep the window smaller. Fewer pixels means more frames.
+* Make sure the Chromebook is plugged in. Many throttle the GPU on battery.
+
+---
+
 ## 🧩 Project structure
 
 ```
@@ -94,7 +117,8 @@ src/world.js          Level builder: house, rooms, furniture, doors, windows, ya
 src/neighbor.js       Neighbor model, vision/hearing, patrol/investigate/chase AI
 src/nav.js            Waypoint graph + pathfinding for the neighbor
 src/player.js         First-person controller (walk, sprint, crouch, jump)
-src/physics.js        Lightweight AABB collision for characters and sphere items
+src/physics.js        AABB collision (grid broadphase) for characters and sphere items
+src/quality.js        Graphics presets, device detection, material swap, mesh baking
 src/audio.js          Web Audio synthesized sound effects and chase music
 src/textures.js       Procedural canvas textures
 src/items.js          Throwable props and keys
