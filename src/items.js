@@ -5,7 +5,7 @@ import { bakeChildren } from './quality.js';
 
 const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...extra });
 
-const KEY_COLORS = { red: 0xd62828, blue: 0x1f6fe0 };
+export const KEY_COLORS = { red: 0xd62828, blue: 0x1f6fe0, green: 0x21a152, yellow: 0xf2c200, purple: 0x8e44ad };
 
 export const ITEM_TYPES = {
   box: { name: 'Cardboard Box', radius: 0.24, bounce: 0.15, flat: true },
@@ -21,7 +21,18 @@ export const ITEM_TYPES = {
   wrench: { name: 'Wrench', radius: 0.1, bounce: 0.2, flat: true },
   keyRed: { name: 'Red Key', radius: 0.07, bounce: 0.3, flat: true, key: 'red' },
   keyBlue: { name: 'Blue Key', radius: 0.07, bounce: 0.3, flat: true, key: 'blue' },
+  keyGreen: { name: 'Green Key', radius: 0.07, bounce: 0.3, flat: true, key: 'green' },
+  keyYellow: { name: 'Yellow Key', radius: 0.07, bounce: 0.3, flat: true, key: 'yellow' },
+  keyPurple: { name: 'Purple Key', radius: 0.07, bounce: 0.3, flat: true, key: 'purple' },
+  crowbar: { name: 'Crowbar', radius: 0.12, bounce: 0.15, flat: true, important: true },
+  plate: { name: 'Plate', radius: 0.1, bounce: 0.1, flat: true },
+  shoe: { name: 'Shoe', radius: 0.09, bounce: 0.2, flat: true },
+  pillow: { name: 'Pillow', radius: 0.16, bounce: 0.3, flat: true },
+  bottle: { name: 'Bottle', radius: 0.08, bounce: 0.2 },
 };
+
+/** Item type name for a key colour, e.g. 'red' -> 'keyRed'. */
+export const keyType = (color) => `key${color[0].toUpperCase()}${color.slice(1)}`;
 
 export function makeItemMesh(type, textures) {
   const g = new THREE.Group();
@@ -105,9 +116,41 @@ export function makeItemMesh(type, textures) {
       add(new THREE.TorusGeometry(0.03, 0.012, 6, 12, Math.PI * 1.5), m, 0.14, 0, 0).rotation.x = Math.PI / 2;
       break;
     }
+    case 'crowbar': {
+      const m = std(0xb03a2e, { metalness: 0.6, roughness: 0.4 });
+      add(new THREE.CylinderGeometry(0.014, 0.014, 0.6, 8), m, 0, 0, 0).rotation.z = Math.PI / 2;
+      const hook = add(new THREE.TorusGeometry(0.05, 0.014, 6, 12, Math.PI), m, 0.3, 0.05, 0);
+      hook.rotation.z = -Math.PI / 2;
+      add(new THREE.BoxGeometry(0.06, 0.012, 0.03), m, -0.32, -0.02, 0).rotation.z = 0.5;
+      break;
+    }
+    case 'plate': {
+      add(new THREE.CylinderGeometry(0.11, 0.08, 0.02, 18), std(0xf4f1ea, { roughness: 0.3 }));
+      break;
+    }
+    case 'shoe': {
+      const m = std(0x4a2f1f);
+      add(new THREE.BoxGeometry(0.1, 0.08, 0.26), m);
+      add(new THREE.BoxGeometry(0.1, 0.06, 0.1), m, 0, 0.06, -0.07);
+      add(new THREE.BoxGeometry(0.11, 0.02, 0.27), std(0xeeeeee), 0, -0.045, 0);
+      break;
+    }
+    case 'pillow': {
+      add(new THREE.BoxGeometry(0.45, 0.12, 0.3), std(0xe8d9c4));
+      break;
+    }
+    case 'bottle': {
+      const m = std(0x2e7d32, { roughness: 0.2 });
+      add(new THREE.CylinderGeometry(0.035, 0.035, 0.16, 12), m);
+      add(new THREE.CylinderGeometry(0.012, 0.03, 0.08, 10), m, 0, 0.12, 0);
+      break;
+    }
     case 'keyRed':
-    case 'keyBlue': {
-      const color = KEY_COLORS[type === 'keyRed' ? 'red' : 'blue'];
+    case 'keyBlue':
+    case 'keyGreen':
+    case 'keyYellow':
+    case 'keyPurple': {
+      const color = KEY_COLORS[ITEM_TYPES[type].key];
       const m = std(color, { metalness: 0.6, roughness: 0.3, emissive: color, emissiveIntensity: 0.45 });
       const ring = add(new THREE.TorusGeometry(0.035, 0.012, 8, 18), m, -0.06, 0, 0);
       ring.rotation.x = Math.PI / 2;
@@ -138,6 +181,10 @@ export class Item {
     this.bounce = def.bounce;
     this.flat = !!def.flat;
     this.key = def.key || null;
+    // Keys and the crowbar go back to where they were found if you're caught holding them.
+    this.important = !!(def.key || def.important);
+    this.container = null; // cupboard/fridge/chest this item is hidden in
+    this.homeContainer = null;
     this.mesh = makeItemMesh(type, textures);
     this.mesh.userData.item = this;
     this.pos = new THREE.Vector3(x, y, z);
@@ -160,6 +207,7 @@ export class Item {
     this.mesh.rotation.set(0, this.homeRotY, 0);
     this.sleeping = true;
     this.thrown = false;
+    this.container = this.homeContainer;
     this.mesh.position.copy(this.pos);
   }
 }

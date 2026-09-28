@@ -4,8 +4,10 @@ A browser-playable, fan-made recreation of the original **Hello Neighbor Alpha 1
 experience, built from scratch with [Three.js](https://threejs.org/) and [Vite](https://vite.dev/).
 
 You live across the street from a man who clearly has something to hide. Sneak into his
-house, dodge him as he patrols, find the keys, and get into the padlocked basement,
-without getting caught.
+house, dodge him as he patrols, and find out what he's hiding, without getting caught.
+
+**Every visit is a different house.** The layout, rooms, furniture, locked doors and where
+things are hidden are all generated fresh each time you play.
 
 > **Disclaimer:** this is an unofficial, non-commercial fan tribute. It is not affiliated
 > with or endorsed by tinyBuild or Dynamic Pixels. It contains no assets from the original
@@ -61,7 +63,7 @@ hosted on any static web server. It has to be served over HTTP, not opened as a 
 | **Shift** | Sprint (fast, but loud) |
 | **C** / **Ctrl** | Crouch (silent, harder to spot) |
 | **Space** | Jump (onto counters, through windows) |
-| **E** | Pick up / swap item, open doors, use keys |
+| **E** | Pick up / swap items, open doors and cupboards, use keys, hide, switch things on/off |
 | **Left click** | Throw held item |
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
@@ -71,17 +73,26 @@ Click the game to capture the mouse.
 
 ## 🏠 How to play
 
-* **Goal:** get into the neighbor's basement.
-* The **front door** is locked. Find another way in: the back door, or smash a window by
-  throwing something at it. Breaking glass is loud, and he *will* come to check.
+There are no objectives or hints. Exploring and figuring things out is the game. A few basics:
+
+* The front door is locked. Find another way in. Windows break if you throw things at them,
+  but he'll hear the glass.
 * He patrols the house and yard. The **eye** at the top of the screen shows how suspicious
   he is. When it turns red he's chasing you, so break line of sight or get off his property.
 * Footsteps make noise. Sprinting is loud, walking is quieter, and crouching is silent.
+* Cupboards, fridges and chests open, and things are often tucked away inside.
+* You can hide in wardrobes, as long as he didn't watch you climb in.
+* TVs and radios make a racket when switched on, and he'll come to turn them off.
 * Throw an object at him to stun him for a couple of seconds.
-* If he catches you, you wake up back in front of your own house. Broken windows and opened
-  padlocks stay that way, but a key you were holding goes back to where you found it.
-* The basement door has a **red padlock**, and the upstairs bedroom has a **blue** one. Keys
-  are hidden somewhere in the house…
+* If he catches you, you wake up back in front of your own house. Doors you've opened stay
+  open, but a key you were holding goes back to where you found it.
+
+### Replaying a house
+
+Each house has a number, shown in the pause menu and on the end screen. **Restart this
+house** / **Replay this house** play the same one again. To share a house, add `?seed=` and
+its number to the address, e.g. `http://localhost:5173/?seed=123456`. **New house** generates
+a fresh one.
 
 ---
 
@@ -113,7 +124,10 @@ If it's still slow on a Chromebook:
 ```
 index.html            UI overlays (menu, HUD, pause, ending)
 src/main.js           Game loop, input, interaction, items, catch/ending sequences
-src/world.js          Level builder: house, rooms, furniture, doors, windows, yard, street
+src/housegen.js       Procedural house layout: rooms, doors, windows, lock-and-key puzzle, nav graph
+src/world.js          Builds the generated house (walls, stairs, basement, furniture, items) + street
+src/builder.js        Merged static geometry, materials
+src/rng.js            Seeded random numbers (so a house can be replayed)
 src/neighbor.js       Neighbor model, vision/hearing, patrol/investigate/chase AI
 src/nav.js            Waypoint graph + pathfinding for the neighbor
 src/player.js         First-person controller (walk, sprint, crouch, jump)

@@ -42,26 +42,31 @@ canvas {
   pointer-events: none;
 }
 
-#objective {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  max-width: min(420px, 70vw);
-  padding: 10px 14px;
-  background: rgba(0, 0, 0, 0.45);
-  border-left: 4px solid var(--accent);
-  border-radius: 4px;
-  font-size: 15px;
-  line-height: 1.35;
-  text-shadow: 0 1px 2px #000;
+#hideOverlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  /* Peeking out between wardrobe slats. */
+  background:
+    repeating-linear-gradient(180deg, rgba(8, 5, 2, 0.94) 0 34px, rgba(8, 5, 2, 0) 34px 52px),
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.7) 100%);
 }
 
-#objective .label {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  opacity: 0.7;
+#hideOverlay .hideText {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 16px;
+  font-size: 15px;
+}
+
+#hideOverlay kbd {
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 4px;
 }
 
 #eye {

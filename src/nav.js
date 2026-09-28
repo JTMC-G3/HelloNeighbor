@@ -1,93 +1,34 @@
 import * as THREE from 'three';
 
 /*
- * Hand-placed waypoint graph the neighbor walks along. Edges are straight
- * lines that avoid furniture and pass through the middle of doorways; stairs
- * are just an edge whose ends are on different floors.
+ * Waypoint graph the neighbor walks along, generated with the house (see
+ * housegen.js). Edges are straight lines through the middle of doorways;
+ * stairs are just an edge whose ends are on different floors. Edges through
+ * a boarded-up door are skipped until the boards come off.
  */
-const NODES = {
-  // outside (y = 0)
-  street: [0, 0, -1],
-  gate: [0, 0, -6.8],
-  frontOut: [0, 0, -8.3],
-  ySW: [-11, 0, -8],
-  yW: [-11, 0, -16],
-  yNW: [-11, 0, -25],
-  backOut: [-6.5, 0, -23.8],
-  yN: [0, 0, -26],
-  yNE: [11, 0, -25],
-  yE: [11, 0, -16],
-  ySE: [11, 0, -8],
-  // ground floor (y = 0.3)
-  frontDoor: [0, 0.3, -10],
-  hFront: [0, 0.3, -11.3],
-  hMid: [0.8, 0.3, -16],
-  hNorth: [0.6, 0.3, -20.7],
-  hBase: [-1.3, 0.3, -20.3],
-  stairBot: [-1.4, 0.3, -12.3],
-  lDoor: [-2, 0.3, -11.2],
-  lIn: [-3.3, 0.3, -11.2],
-  lCenter: [-4.2, 0.3, -13.5],
-  kArch: [-4.5, 0.3, -16],
-  kCenter: [-4, 0.3, -18.3],
-  kIn: [-3.3, 0.3, -20.7],
-  kDoor: [-2, 0.3, -20.7],
-  kBack: [-6.5, 0.3, -21.2],
-  backDoor: [-6.5, 0.3, -22],
-  sDoor: [2, 0.3, -11.2],
-  sIn: [3.3, 0.3, -11.2],
-  sCenter: [5, 0.3, -13],
-  tArch: [5, 0.3, -16],
-  tCenter: [5, 0.3, -19],
-  tIn: [3.3, 0.3, -20.7],
-  tDoor: [2, 0.3, -20.7],
-  // upstairs (y = 3.5)
-  stairTop: [-1.4, 3.5, -19.6],
-  uHall: [0.6, 3.5, -20.9],
-  uSouth: [0.6, 3.5, -11.5],
-  uwDoor: [-2, 3.5, -20.9],
-  uwIn: [-3.3, 3.5, -20.9],
-  uwCenter: [-5, 3.5, -16],
-  ubDoor: [2, 3.5, -20.9],
-  ubIn: [3.3, 3.5, -20.9],
-  ubCenter: [5, 3.5, -16.5],
-};
-
-const EDGES = [
-  ['street', 'gate'], ['gate', 'frontOut'], ['gate', 'ySW'], ['gate', 'ySE'],
-  ['ySW', 'yW'], ['yW', 'yNW'], ['yNW', 'backOut'], ['backOut', 'yN'], ['yN', 'yNE'],
-  ['yNE', 'yE'], ['yE', 'ySE'],
-  ['frontOut', 'frontDoor'], ['frontDoor', 'hFront'],
-  ['hFront', 'hMid'], ['hMid', 'hNorth'], ['hNorth', 'hBase'], ['hFront', 'stairBot'],
-  ['hFront', 'lDoor'], ['lDoor', 'lIn'], ['lIn', 'lCenter'], ['lCenter', 'kArch'], ['kArch', 'kCenter'],
-  ['kCenter', 'kIn'], ['kIn', 'kDoor'], ['kDoor', 'hNorth'], ['kCenter', 'kBack'], ['kBack', 'backDoor'],
-  ['backDoor', 'backOut'],
-  ['hFront', 'sDoor'], ['sDoor', 'sIn'], ['sIn', 'sCenter'], ['sCenter', 'tArch'], ['tArch', 'tCenter'],
-  ['tCenter', 'tIn'], ['tIn', 'tDoor'], ['tDoor', 'hNorth'],
-  ['stairBot', 'stairTop'],
-  ['stairTop', 'uHall'], ['stairTop', 'uwDoor'], ['uHall', 'uSouth'], ['uHall', 'uwDoor'], ['uwDoor', 'uwIn'],
-  ['uwIn', 'uwCenter'], ['uHall', 'ubDoor'], ['ubDoor', 'ubIn'], ['ubIn', 'ubCenter'],
-];
 
 const walkFilter = (c) => c.kind !== 'door';
 const a = new THREE.Vector3();
 const b = new THREE.Vector3();
 
 export class Nav {
-  constructor(physics) {
+  constructor(physics, data) {
     this.physics = physics;
     this.nodes = new Map();
-    for (const [id, [x, y, z]] of Object.entries(NODES)) {
-      this.nodes.set(id, { id, pos: new THREE.Vector3(x, y, z), links: [] });
-    }
-    for (const [p, q] of EDGES) {
-      this.nodes.get(p).links.push(q);
-      this.nodes.get(q).links.push(p);
+    this.edges = data.edges;
+    for (const n of data.nodes) this.nodes.set(n.id, { id: n.id, pos: new THREE.Vector3(n.x, n.y, n.z), links: [] });
+    for (const e of data.edges) {
+      this.nodes.get(e.a).links.push({ to: e.b, door: e.door });
+      this.nodes.get(e.b).links.push({ to: e.a, door: e.door });
     }
   }
 
   pos(id) {
     return this.nodes.get(id).pos;
+  }
+
+  has(id) {
+    return this.nodes.has(id);
   }
 
   /** Can a character walk in a straight line from p to q (ignoring doors, which open)? */
@@ -104,8 +45,7 @@ export class Nav {
     let best = null;
     let bestD = Infinity;
     for (const n of this.nodes.values()) {
-      const dy = Math.abs(n.pos.y - p.y);
-      if (dy > 1.4) continue;
+      if (Math.abs(n.pos.y - p.y) > 1.4) continue;
       const d = n.pos.distanceToSquared(p);
       if (d < bestD && (!requireClear || this.clear(p, n.pos))) {
         best = n;
@@ -130,7 +70,7 @@ export class Nav {
     return best.id;
   }
 
-  /** Dijkstra over the (tiny) graph; returns node ids from `from` to `to`. */
+  /** Dijkstra over the graph; returns node ids from `from` to `to`, or null. */
   path(from, to) {
     if (from === to) return [from];
     const dist = new Map([[from, 0]]);
@@ -148,7 +88,8 @@ export class Nav {
       open.delete(cur);
       if (cur === to) break;
       const cn = this.nodes.get(cur);
-      for (const nid of cn.links) {
+      for (const { to: nid, door } of cn.links) {
+        if (door && door.boarded) continue;
         const nd = cd + cn.pos.distanceTo(this.nodes.get(nid).pos);
         if (nd < (dist.get(nid) ?? Infinity)) {
           dist.set(nid, nd);
@@ -170,11 +111,11 @@ export class Nav {
   /** Lists edges whose straight line is blocked by level geometry (dev check). */
   validate() {
     const bad = [];
-    for (const [p, q] of EDGES) {
-      const P = this.pos(p);
-      const Q = this.pos(q);
+    for (const e of this.edges) {
+      const P = this.pos(e.a);
+      const Q = this.pos(e.b);
       if (Math.abs(P.y - Q.y) > 1) continue; // stairs
-      if (!this.clear(P, Q)) bad.push(`${p} -> ${q}`);
+      if (!this.clear(P, Q)) bad.push(`${e.a} -> ${e.b}`);
     }
     return bad;
   }

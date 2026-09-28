@@ -76,6 +76,12 @@ export function saveSetting(key, value) {
 // ------------------------------------------------------------------ materials
 const toLambert = new Map();
 const toStandard = new Map();
+let standardMode = true;
+
+/** The version of a material to use right now (for materials swapped at runtime). */
+export function adapt(m) {
+  return !standardMode && m.isMeshStandardMaterial ? lambertOf(m) : m;
+}
 
 function lambertOf(m) {
   let l = toLambert.get(m);
@@ -103,6 +109,7 @@ function lambertOf(m) {
 
 /** Swap every PBR material in the scene for a cheap Lambert twin (or back). */
 export function setMaterialQuality(root, standard) {
+  standardMode = standard;
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return;
     if (standard) o.material = toStandard.get(o.material) || o.material;

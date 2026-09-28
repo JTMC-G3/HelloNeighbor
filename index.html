@@ -10,7 +10,6 @@
   <body>
     <div id="app">
       <div id="hud" class="hidden">
-        <div id="objective"><span class="label">Objective</span><span id="objectiveText"></span></div>
         <div id="eye" title="How aware the neighbor is of you">
           <svg viewBox="0 0 64 36" aria-hidden="true">
             <path d="M2 18 C 16 2, 48 2, 62 18 C 48 34, 16 34, 2 18 Z" fill="rgba(0,0,0,0.45)" stroke="#fff" stroke-width="2.5" />
@@ -25,6 +24,7 @@
       </div>
 
       <div id="fps" class="hidden"></div>
+      <div id="hideOverlay" class="hidden"><div class="hideText"><kbd>E</kbd> Leave hiding spot</div></div>
       <div id="fade"></div>
       <div id="caughtText" class="hidden">GOT YOU!</div>
 
@@ -33,9 +33,9 @@
           <h1 class="title">HELLO<br />NEIGHBOR</h1>
           <div class="subtitle">Alpha 1 &mdash; fan recreation</div>
           <p class="blurb">
-            Something is off about the guy across the street. He never lets anyone near his house,
-            and there's a basement door with a padlock on it. Sneak in, find the keys, and find out
-            what he's hiding &mdash; without getting caught.
+            Something is off about the guy across the street. He never lets anyone near his house.
+            Sneak in, poke around, and find out what he's hiding &mdash; without getting caught.
+            His house is different every time you visit.
           </p>
           <button id="playBtn" class="btn">Play</button>
           <div class="settings">
@@ -55,13 +55,13 @@
             <div><kbd>Shift</kbd> Sprint (loud)</div>
             <div><kbd>C</kbd>/<kbd>Ctrl</kbd> Crouch (quiet)</div>
             <div><kbd>Space</kbd> Jump</div>
-            <div><kbd>E</kbd> Use / pick up</div>
+            <div><kbd>E</kbd> Use / open / pick up / hide</div>
             <div><kbd>Click</kbd> Throw held item</div>
             <div><kbd>Q</kbd> Drop item</div>
             <div><kbd>F</kbd> Flashlight</div>
             <div><kbd>Esc</kbd> Pause</div>
           </div>
-          <p class="tip">Tip: throw things at windows to break in &mdash; but he'll hear the glass.</p>
+          <p class="tip">Tip: windows break if you throw things at them &mdash; but he'll hear the glass.</p>
           <p class="disclaimer">
             Unofficial, non-commercial fan tribute. Not affiliated with or endorsed by tinyBuild or
             Dynamic Pixels. All code, models, textures, and sounds are original and generated in the browser.
@@ -72,6 +72,7 @@
       <div id="pause" class="overlay hidden">
         <div class="panel small">
           <h2>Paused</h2>
+          <div class="seedLabel tip"></div>
           <button id="resumeBtn" class="btn">Resume</button>
           <label class="slider">Mouse sensitivity
             <input id="sens" type="range" min="0.5" max="3" step="0.1" value="1" />
@@ -90,7 +91,8 @@
             </label>
             <label class="check"><input type="checkbox" class="fpsChk" /> Show FPS</label>
           </div>
-          <button id="restartBtn" class="btn secondary">Restart</button>
+          <button id="restartBtn" class="btn secondary">Restart this house</button>
+          <button class="btn secondary newHouseBtn">New house</button>
           <p id="lockNote" class="tip hidden">
             Your browser blocked mouse capture here (common in embedded previews such as the VS Code
             Simple Browser). Open the game in a normal browser tab, or drag with the mouse / use the arrow keys to look.
@@ -103,7 +105,8 @@
           <h1 class="title small">TO BE<br />CONTINUED...</h1>
           <p class="blurb">You made it into the neighbor's basement. What you found down there raises more questions than it answers.</p>
           <div id="stats"></div>
-          <button id="againBtn" class="btn">Play again</button>
+          <button class="btn newHouseBtn">New house</button>
+          <button id="againBtn" class="btn secondary">Replay this house</button>
         </div>
       </div>
     </div>

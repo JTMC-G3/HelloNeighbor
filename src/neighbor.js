@@ -7,12 +7,6 @@ const EYE_H = 1.8;
 const VIEW_RANGE = 22;
 const FOV_COS = Math.cos(THREE.MathUtils.degToRad(62));
 
-// Patrol targets and how much the neighbor likes to hang around each.
-const PATROL = [
-  ['hBase', 4], ['kCenter', 3], ['lCenter', 2], ['sCenter', 2], ['tCenter', 2], ['hFront', 1],
-  ['ubCenter', 2], ['uwCenter', 1], ['uSouth', 1], ['frontOut', 1], ['yNW', 1], ['ySE', 1],
-];
-
 const visionFilter = (c) => c.kind !== 'glass';
 
 function buildModel(textures) {
@@ -124,12 +118,21 @@ export class Neighbor {
     this.reset();
   }
 
+  /** Patrol targets ([nodeId, weight]) and home/guard nodes come from the generated house. */
+  setRoutes(patrol, home, guard) {
+    this.patrol = patrol;
+    this.home = home;
+    this.guard = guard;
+    this.reset();
+  }
+
   reset() {
-    this.ch.pos.copy(this.nav.pos('hMid'));
+    this.ch.pos.copy(this.nav.pos(this.home || this.nav.nodes.keys().next().value));
     this.ch.vel.set(0, 0, 0);
     this.state = 'patrol';
     this.wait = 1.5;
-    this.goal = 'hBase';
+    this.goal = this.guard;
+    this.sawHide = false;
     this.path = [];
     this.pathIdx = 0;
     this.awareness = 0;
@@ -158,6 +161,7 @@ export class Neighbor {
   }
 
   canSee(player) {
+    if (player.hidden) return false;
     const e = this.eye(this.eyeV);
     const pe = player.eye(this.tmp);
     const dx = pe.x - e.x;
@@ -191,7 +195,14 @@ export class Neighbor {
 
   setPathToNode(id) {
     const from = this.nav.nearest(this.ch.pos);
-    const pts = (this.nav.path(from, id) || [from, id]).map((n) => this.nav.pos(n));
+    const ids = this.nav.path(from, id);
+    if (!ids) {
+      // Unreachable right now (boarded-up door): just stay put for a bit.
+      this.path = [];
+      this.pathIdx = 0;
+      return;
+    }
+    const pts = ids.map((n) => this.nav.pos(n));
     if (pts.length > 1 && this.nav.clear(this.ch.pos, pts[1]) && Math.abs(pts[1].y - this.ch.pos.y) < 1) pts.shift();
     this.path = pts;
     this.pathIdx = 0;
@@ -239,7 +250,7 @@ export class Neighbor {
   }
 
   pickPatrol() {
-    const opts = PATROL.filter(([id]) => id !== this.goal);
+    const opts = this.patrol.filter(([id]) => id !== this.goal);
     const total = opts.reduce((s, [, w]) => s + w, 0);
     let r = Math.random() * total;
     for (const [id, w] of opts) {
@@ -294,7 +305,7 @@ export class Neighbor {
     for (const d of this.doorsRef) {
       const dist = Math.hypot(d.center.x - this.ch.pos.x, d.center.z - this.ch.pos.z);
       const sameFloor = Math.abs(d.center.y - this.ch.pos.y) < 1.2;
-      if (!d.open && !d.neighborIgnore && dist < 1.35 && sameFloor && this.speed > 0.2) {
+      if (!d.open && !d.neighborIgnore && !d.boarded && dist < 1.35 && sameFloor && this.speed > 0.2) {
         d.setOpen(true);
         this.sound.door(d.center, true);
         this.openedDoors.add(d);
@@ -375,7 +386,8 @@ export class Neighbor {
     }
 
     // Bumping into him is a bad idea.
-    if (toP < 0.95 && dy < 1.3 && this.state !== 'stunned' && onProp) this.startChase(game);
+    const findable = !player.hidden || this.sawHide;
+    if (toP < 0.95 && dy < 1.3 && this.state !== 'stunned' && onProp && findable) this.startChase(game);
 
     let trying = false;
     switch (this.state) {
@@ -399,7 +411,13 @@ export class Neighbor {
       case 'investigate': {
         if (!this.arrived) {
           trying = true;
-          if (this.followPath(WALK * 1.35, dt)) this.arrived = true;
+          if (this.followPath(WALK * 1.35, dt)) {
+            this.arrived = true;
+            // Whatever made that racket gets switched off.
+            for (const app of game.world.appliances) {
+              if (app.on && app.pos.distanceTo(this.ch.pos) < 3.2) game.setAppliance(app, false, true);
+            }
+          }
         } else {
           this.stop(dt);
           this.heading += dt * 1.8;
@@ -462,7 +480,7 @@ export class Neighbor {
     if (this.ch.pos.y < -10) this.reset();
 
     // Catch.
-    if (this.state === 'chase' && toP < 1.05 && dy < 1.3) game.caught();
+    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && findable) game.caught();
 
     this.animate(dt);
   }

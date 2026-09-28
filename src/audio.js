@@ -212,6 +212,35 @@ export class Sound {
     this.noise(node, { dur: 0.25, type: 'bandpass', freq: 500, q: 2, gain: 0.5 });
   }
 
+  click() {
+    if (!this.ok()) return;
+    const { node } = this.out(null, 0.4);
+    this.noise(node, { dur: 0.03, type: 'bandpass', freq: 2500, q: 3, gain: 1 });
+  }
+
+  pry(pos) {
+    if (!this.ok()) return;
+    const { node } = this.out(pos, 0.9);
+    this.noise(node, { dur: 0.35, type: 'bandpass', freq: 700, freqEnd: 300, q: 2, gain: 1 });
+    this.tone(node, { t: 0.1, type: 'sawtooth', freq: 320, freqEnd: 180, dur: 0.3, gain: 0.12 });
+    this.noise(node, { t: 0.35, dur: 0.2, type: 'lowpass', freq: 500, gain: 1 });
+  }
+
+  /** A burst of whatever a TV or radio is playing, heard from its position. */
+  appliance(pos, kind) {
+    if (!this.ok()) return;
+    const { node, gain } = this.out(pos, 0.7, 30);
+    if (gain < 0.001) return;
+    if (kind === 'tv') {
+      this.noise(node, { dur: 1.3, type: 'bandpass', freq: 1800, q: 0.7, gain: 0.35, attack: 0.05 });
+      for (let i = 0; i < 4; i++) this.tone(node, { t: i * 0.3, type: 'square', freq: 180 + Math.random() * 220, dur: 0.18, gain: 0.08 });
+    } else {
+      const scale = [261.6, 293.7, 329.6, 392, 440, 523.3];
+      for (let i = 0; i < 6; i++) this.tone(node, { t: i * 0.22, type: 'triangle', freq: scale[(Math.random() * scale.length) | 0], dur: 0.2, gain: 0.18 });
+      this.tone(node, { type: 'sine', freq: 130.8, dur: 1.3, gain: 0.12 });
+    }
+  }
+
   caught() {
     if (!this.ok()) return;
     const { node } = this.out(null, 1);

@@ -29,6 +29,7 @@ export class Player {
     this.stepAcc = 0;
     this.bob = 0;
     this.held = null;
+    this.hidden = null; // hide spot (wardrobe) while hiding
     this.moving = false;
   }
 

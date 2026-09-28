@@ -6,10 +6,12 @@ import { Nav } from './nav.js';
 import { Player } from './player.js';
 import { Neighbor } from './neighbor.js';
 import { Sound } from './audio.js';
-import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality } from './quality.js';
+import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality, adapt } from './quality.js';
+import { randomSeed } from './rng.js';
 
 const REACH = 2.5;
-const notDoor = (c) => c.kind !== 'door';
+// Things that block reaching for an item: walls, glass, closed cupboards (not doors, handled separately).
+const blocksReach = (c) => c.kind !== 'door' && !(c.container && c.container.t > 0.3);
 const $ = (id) => document.getElementById(id);
 
 class Game {
@@ -19,8 +21,10 @@ class Game {
     this.playTime = 0;
     this.catches = 0;
     this.noises = [];
-    this.flags = { sawBasementLock: false, sawBedroomLock: false };
     this.pointerLockFailed = false;
+    // Every visit is a different house; ?seed=123456 replays a specific one.
+    const seedParam = Number(new URLSearchParams(window.location.search).get('seed'));
+    this.seed = Number.isFinite(seedParam) && seedParam > 0 ? Math.floor(seedParam) : randomSeed();
 
     // ---- graphics settings
     this.detected = detectQuality();
@@ -63,10 +67,13 @@ class Game {
     // ---- systems
     this.sound = new Sound();
     this.physics = new Physics();
-    this.world = buildWorld(scene, this.physics);
-    this.nav = new Nav(this.physics);
+    this.world = buildWorld(scene, this.physics, this.seed);
+    this.nav = new Nav(this.physics, this.world.navData);
     this.player = new Player(this.camera, this.physics, this.sound);
     this.neighbor = new Neighbor(scene, this.world.textures, this.physics, this.nav, this.sound);
+    const nd = this.world.navData;
+    this.neighbor.setRoutes(nd.patrol, nd.home, nd.guard);
+    for (const el of document.querySelectorAll('.seedLabel')) el.textContent = `House #${this.seed}`;
     this.player.spawn(SPAWN, 0);
 
     this.raycaster = new THREE.Raycaster();
@@ -88,7 +95,6 @@ class Game {
 
     this.bindInput();
     this.bindSettings();
-    this.updateObjective();
     window.addEventListener('resize', () => this.onResize());
 
     this.lastTime = performance.now();
@@ -322,8 +328,16 @@ class Game {
 
     $('playBtn').addEventListener('click', () => this.start());
     $('resumeBtn').addEventListener('click', () => this.resume());
-    $('restartBtn').addEventListener('click', () => window.location.reload());
-    $('againBtn').addEventListener('click', () => window.location.reload());
+    // Same house again (keeps the seed in the URL) or a brand-new house.
+    const replay = () => {
+      window.location.search = `?seed=${this.seed}`;
+    };
+    const fresh = () => {
+      window.location.href = window.location.pathname;
+    };
+    $('restartBtn').addEventListener('click', replay);
+    $('againBtn').addEventListener('click', replay);
+    for (const b of document.querySelectorAll('.newHouseBtn')) b.addEventListener('click', fresh);
     $('sens').addEventListener('input', (e) => {
       p.sensitivity = 0.0022 * Number(e.target.value);
     });
@@ -347,7 +361,6 @@ class Game {
     this.player.spawn(SPAWN, 0);
     this.lockPointer();
     this.toast("There's something strange going on across the street...");
-    setTimeout(() => this.toast("Get into the neighbor's basement. Don't let him catch you!"), 2500);
   }
 
   pause() {
@@ -376,7 +389,8 @@ class Game {
   // ============================================================== helpers
   onProperty(p) {
     if (p.y < -0.5) return true;
-    return p.x > -14.1 && p.x < 14.1 && p.z < -5.9 && p.z > -30.2;
+    const y = this.world.yard;
+    return p.x > y.x0 - 0.1 && p.x < y.x1 + 0.1 && p.z < y.z1 + 0.1 && p.z > y.z0 - 0.2;
   }
 
   emitNoise(pos, radius) {
@@ -395,25 +409,6 @@ class Game {
     setTimeout(() => el.remove(), ms + 600);
   }
 
-  updateObjective() {
-    const w = this.world;
-    const basement = w.doorById('basement');
-    const bedroom = w.doorById('bedroom');
-    const heldKey = this.player.held && this.player.held.key;
-    let text;
-    if (!basement.locked) text = 'The basement is open. Go down there.';
-    else if (heldKey === 'red') text = 'Use the red key on the basement door (under the stairs).';
-    else if (!bedroom.locked) text = 'Search the upstairs bedroom for the red key.';
-    else if (heldKey === 'blue') text = 'Find the door with the blue padlock (upstairs).';
-    else if (this.flags.sawBedroomLock) text = 'Find a blue key for the upstairs bedroom.';
-    else if (this.flags.sawBasementLock) text = 'The basement door has a red padlock. Search the house for a way in.';
-    else text = "Get into the neighbor's basement.";
-    if (text !== this.objective) {
-      this.objective = text;
-      $('objectiveText').textContent = text;
-    }
-  }
-
   toggleFlashlight() {
     this.flashlightOn = !this.flashlightOn;
     this.flashlight.intensity = this.flashlightOn ? 40 : 0;
@@ -429,16 +424,16 @@ class Game {
     const dir = this.camera.getWorldDirection(new THREE.Vector3());
     this.raycaster.set(eye, dir);
     this.raycaster.far = REACH + 1;
-    const doorHit = this.raycaster.intersectObjects(this.rayTargets, false)[0];
-    const blockT = this.physics.raycast(eye, dir, REACH + 1, notDoor);
-    const doorT = doorHit && doorHit.distance < blockT + 0.05 ? doorHit.distance : Infinity;
-    const wallT = Math.min(blockT, doorT);
+    const hit = this.raycaster.intersectObjects(this.rayTargets, false).find((h) => h.object.visible);
+    const blockT = this.physics.raycast(eye, dir, REACH + 1, blocksReach);
+    const hitT = hit && hit.distance < blockT + 0.05 ? hit.distance : Infinity;
+    const wallT = Math.min(blockT, hitT);
 
     let best = null;
     let bestScore = Infinity;
     const v = new THREE.Vector3();
     for (const it of this.world.items) {
-      if (it.held || it.consumed) continue;
+      if (it.held || it.consumed || (it.container && it.container.t < 0.5)) continue;
       v.subVectors(it.pos, eye);
       const t = v.dot(dir);
       if (t < 0.1 || t > REACH || t > wallT + it.radius) continue;
@@ -452,7 +447,13 @@ class Game {
       }
     }
     if (best) return { item: best };
-    if (doorT <= REACH) return { door: doorHit.object.userData.door };
+    if (hitT <= REACH) {
+      const u = hit.object.userData;
+      if (u.door) return { door: u.door };
+      if (u.container) return { container: u.container };
+      if (u.hide) return { hide: u.hide };
+      if (u.appliance) return { appliance: u.appliance };
+    }
     return null;
   }
 
@@ -464,10 +465,16 @@ class Game {
       html = `<kbd>E</kbd> ${this.player.held ? 'Swap for' : 'Pick up'} ${t.item.name}`;
     } else if (t && t.door) {
       const d = t.door;
-      const heldKey = this.player.held && this.player.held.key;
-      if (d.locked && d.key && heldKey === d.key) html = `<kbd>E</kbd> Unlock ${d.name}`;
-      else if (d.locked && !d.open) html = `<kbd>E</kbd> ${d.name} <span style="color:#ff8a80">(locked)</span>`;
+      const lock = this.usableLock(d);
+      if (lock) html = lock.type === 'key' ? `<kbd>E</kbd> Use ${this.player.held.name}` : '<kbd>E</kbd> Pry the boards off';
+      else if (d.locked && !d.open) html = `<kbd>E</kbd> ${d.name} <span style="color:#ff8a80">(${d.boarded ? 'boarded up' : 'locked'})</span>`;
       else html = `<kbd>E</kbd> ${d.open ? 'Close' : 'Open'} ${d.name}`;
+    } else if (t && t.container) {
+      html = `<kbd>E</kbd> ${t.container.open ? 'Close' : 'Open'} ${t.container.name}`;
+    } else if (t && t.hide) {
+      html = '<kbd>E</kbd> Hide inside';
+    } else if (t && t.appliance) {
+      html = `<kbd>E</kbd> Turn ${t.appliance.on ? 'off' : 'on'} ${t.appliance.name}`;
     }
     if (this.promptHtml !== html) {
       this.promptHtml = html;
@@ -476,43 +483,77 @@ class Game {
     }
   }
 
+  /** The lock on door `d` that the held item can remove, if any. */
+  usableLock(d) {
+    const held = this.player.held;
+    if (!held || d.open) return null;
+    return d.locks.find((l) => (l.type === 'key' && held.key === l.color) || (l.type === 'boards' && held.type === 'crowbar')) || null;
+  }
+
+  describeLocks(d) {
+    if (d.frontLocked) return 'Locked tight. There must be another way in.';
+    const keys = d.locks.filter((l) => l.type === 'key').map((l) => l.color);
+    const parts = [];
+    if (d.boarded) parts.push('boarded up');
+    if (keys.length) parts.push(`padlocked (${keys.join(', ')})`);
+    const text = parts.join(' and ');
+    return `${text[0].toUpperCase()}${text.slice(1)}.`;
+  }
+
   interact() {
+    const p = this.player;
+    if (p.hidden) {
+      this.leaveHiding();
+      return;
+    }
     const t = this.target;
     if (!t) return;
-    const p = this.player;
     if (t.item) {
       const old = p.held;
       if (old) this.release(old, true);
       this.pickUp(t.item);
       return;
     }
+    if (t.container) {
+      const c = t.container;
+      c.open = !c.open;
+      this.sound.door(c.panel.getWorldPosition(new THREE.Vector3()), c.open);
+      this.emitNoise(p.pos, 2.5);
+      return;
+    }
+    if (t.hide) {
+      this.hide(t.hide);
+      return;
+    }
+    if (t.appliance) {
+      this.setAppliance(t.appliance, !t.appliance.on);
+      return;
+    }
     const d = t.door;
     if (d.locked && !d.open) {
-      if (d.key && p.held && p.held.key === d.key) {
-        const key = p.held;
-        this.release(key, false);
-        key.consumed = true;
-        key.mesh.visible = false;
-        d.unlock();
-        d.setOpen(true);
-        this.sound.unlock();
-        this.sound.door(d.center, true);
-        this.toast(d.id === 'basement' ? 'The padlock falls away. The basement is open...' : 'Unlocked!');
+      const lock = this.usableLock(d);
+      if (lock) {
+        d.removeLock(lock);
+        if (lock.type === 'key') {
+          const key = p.held;
+          this.release(key, false);
+          key.consumed = true;
+          key.mesh.visible = false;
+          this.sound.unlock();
+        } else {
+          this.sound.pry(d.center);
+          this.emitNoise(d.center, 8);
+        }
+        if (!d.locked) {
+          d.setOpen(true);
+          this.sound.door(d.center, true);
+        } else {
+          this.toast(`Still ${this.describeLocks(d).toLowerCase()}`);
+        }
       } else {
         this.sound.locked(d.center);
-        if (d.id === 'basement') {
-          this.flags.sawBasementLock = true;
-          this.toast('Locked with a red padlock. The key must be somewhere in the house.');
-        } else if (d.id === 'bedroom') {
-          this.flags.sawBedroomLock = true;
-          this.toast('Locked with a blue padlock.');
-        } else if (d.id === 'front') {
-          this.toast("The front door is locked. There must be another way in.");
-        } else {
-          this.toast('Locked.');
-        }
+        this.toast(this.describeLocks(d));
       }
-      this.updateObjective();
       return;
     }
     d.setOpen(!d.open);
@@ -520,6 +561,59 @@ class Game {
     // Doors creak: the neighbor may hear it if he's close.
     this.emitNoise(d.center, 3.5);
     this.neighbor.openedDoors.delete(d);
+  }
+
+  // ------------------------------------------------------------- hiding
+  hide(spot) {
+    const p = this.player;
+    const n = this.neighbor;
+    // If he watched you climb in, he knows exactly where you are.
+    n.sawHide = n.sees || (n.state === 'chase' && n.lost < 0.8);
+    p.hidden = spot;
+    p.keys.clear();
+    p.ch.vel.set(0, 0, 0);
+    p.ch.pos.copy(spot.inside);
+    p.crouching = false;
+    p.yaw = spot.yaw;
+    p.pitch = -0.05;
+    spot.face.visible = false;
+    this.sound.door(spot.inside, false);
+    $('hideOverlay').classList.remove('hidden');
+  }
+
+  leaveHiding() {
+    const p = this.player;
+    const spot = p.hidden;
+    if (!spot) return;
+    p.hidden = null;
+    p.ch.pos.copy(spot.out);
+    p.ch.vel.set(0, 0, 0);
+    spot.face.visible = true;
+    this.neighbor.sawHide = false;
+    this.sound.door(spot.out, true);
+    $('hideOverlay').classList.add('hidden');
+  }
+
+  // --------------------------------------------------------- appliances
+  setAppliance(app, on, byNeighbor = false) {
+    app.on = on;
+    app.timer = 0;
+    if (app.kind === 'tv') app.mesh.material = adapt(on ? app.onMat : app.offMat);
+    this.sound.click();
+    if (byNeighbor && this.player.pos.distanceTo(app.pos) < 12) this.toast(`He switched off the ${app.name.toLowerCase()}.`, 2200);
+  }
+
+  updateAppliances(dt) {
+    for (const app of this.world.appliances) {
+      if (!app.on) continue;
+      app.timer -= dt;
+      if (app.timer <= 0) {
+        app.timer = 1.4;
+        this.sound.appliance(app.pos, app.kind);
+        // Loud enough to draw him over from anywhere in the house.
+        this.emitNoise(app.pos, 22);
+      }
+    }
   }
 
   pickUp(it) {
@@ -534,14 +628,17 @@ class Game {
     it.mesh.rotation.set(0.1, big ? 0.4 : -0.6, 0);
     it.mesh.scale.setScalar(big ? 0.75 : 1);
     it.mesh.traverse((o) => { o.castShadow = false; });
-    if (it.key) {
+    if (it.container) {
+      it.container.item = null;
+      it.container = null;
+    }
+    if (it.important) {
       this.sound.keyPickup();
-      this.toast(it.key === 'blue' ? 'You found a blue key!' : 'You found a red key! That padlock on the basement door was red...');
+      this.toast(`Picked up: ${it.name}`, 2200);
     } else {
       this.sound.pickup();
     }
     $('held').innerHTML = `Holding: <b>${it.name}</b> &nbsp;·&nbsp; <kbd>Click</kbd> throw &nbsp;<kbd>Q</kbd> drop`;
-    this.updateObjective();
   }
 
   /** Detach the held item from the camera into the world in front of the player. */
@@ -564,7 +661,6 @@ class Game {
     it.sleepTimer = 0;
     it.thrown = false;
     $('held').innerHTML = '';
-    this.updateObjective();
   }
 
   drop() {
@@ -575,7 +671,7 @@ class Game {
 
   throwHeld() {
     const it = this.player.held;
-    if (!it) return;
+    if (!it || this.player.hidden) return;
     this.release(it, false);
     const dir = this.camera.getWorldDirection(new THREE.Vector3());
     const power = it.radius > 0.2 ? 10 : 14;
@@ -696,10 +792,14 @@ class Game {
     this.player.keys.clear();
     this.sound.caught();
     this.sound.setChase(false);
+    if (this.player.hidden) this.leaveHiding();
     const held = this.player.held;
     if (held) {
       this.release(held, true);
-      if (held.key) held.resetHome();
+      if (held.important) {
+        held.resetHome();
+        if (held.container) held.container.item = held;
+      }
     }
   }
 
@@ -737,15 +837,15 @@ class Game {
       this.state = 'playing';
       this.fadeOut = 1;
       if (this.catches === 1) this.toast('You woke up back home. Try again, quieter this time.');
-      else if (this.catches === 3) this.toast("Hint: he eats at his kitchen table. Maybe he left something there.", 5000);
-      else if (this.catches === 5) this.toast('Hint: crouching (C) makes you silent and harder to spot.', 5000);
+      else if (this.catches === 3) this.toast('Tip: crouching (C) is silent, and wardrobes are good hiding places.', 5000);
       else this.toast('Caught again...');
     }
   }
 
   checkEnding() {
     const p = this.player.pos;
-    if (p.y < -2.3 && p.z > -14.2 && p.x > -8 && p.x < 2) {
+    const b = this.world.basement;
+    if (p.y < -2.3 && p.z > b.z0 + 0.3 && p.x > b.x0 && p.x < b.x1) {
       this.state = 'ending';
       this.endT = 0;
       this.player.keys.clear();
@@ -767,7 +867,7 @@ class Game {
       const secs = Math.floor(this.playTime);
       const mm = Math.floor(secs / 60);
       const ss = String(secs % 60).padStart(2, '0');
-      $('stats').innerHTML = `Time: <b>${mm}:${ss}</b><br />Times caught: <b>${this.catches}</b>`;
+      $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${mm}:${ss}</b><br />Times caught: <b>${this.catches}</b>`;
       $('hud').classList.add('hidden');
       $('end').classList.remove('hidden');
       this.state = 'won';
@@ -806,9 +906,23 @@ class Game {
       this.neighbor.update(dt, p, this);
     } else if (this.state === 'playing') {
       this.playTime += dt;
-      p.update(dt, (pos, r) => this.emitNoise(pos, r));
+      if (p.hidden) {
+        // Peeking out of a wardrobe: look around a little, no moving.
+        let d = p.yaw - p.hidden.yaw;
+        d = Math.atan2(Math.sin(d), Math.cos(d));
+        p.yaw = p.hidden.yaw + THREE.MathUtils.clamp(d, -1.1, 1.1);
+        p.pitch = THREE.MathUtils.clamp(p.pitch, -0.6, 0.5);
+        p.syncCamera(dt);
+      } else {
+        p.update(dt, (pos, r) => this.emitNoise(pos, r));
+      }
       this.world.update(dt, this.camera.position);
       this.updateItems(dt);
+      this.updateAppliances(dt);
+      // Things stashed in cupboards only show up once the door is open.
+      for (const it of this.world.items) {
+        if (it.container) it.mesh.visible = it.container.t > 0.25;
+      }
       for (const nz of this.noises) {
         if (nz.pos.distanceTo(this.neighbor.pos) < nz.radius) this.neighbor.hear(nz.pos, this);
       }
