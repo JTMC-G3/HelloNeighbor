@@ -15,6 +15,9 @@ import { Rng } from './rng.js';
 export { FLOOR, UPPER, BASEMENT };
 export const SPAWN = new THREE.Vector3(0, 0, 9.5);
 
+// Heading (rotation about Y, 0 = facing +z) pointing out of a wall into the room.
+const HEADING = { N: 0, S: Math.PI, W: Math.PI / 2, E: -Math.PI / 2 };
+
 const WT = 0.25; // exterior wall thickness
 const IT = 0.15; // interior wall thickness
 const DOOR_H = 2.2;
@@ -117,6 +120,7 @@ export function buildWorld(scene, physics, seed) {
   const containers = [];
   const hideSpots = [];
   const appliances = [];
+  const stations = []; // chore spots for the neighbor (see chores.js)
   const doorByPlanId = new Map();
 
   const solid = (mat, x0, y0, z0, x1, y1, z1, kind = 'wall') => {
@@ -511,6 +515,13 @@ export function buildWorld(scene, physics, seed) {
     const d = side === 'N' || side === 'S' ? r.z1 - r.z0 : r.x1 - r.x0;
     return { box, map, w, d };
   }
+  /** Registers a chore spot in front of a piece of furniture (u along it, v out from the wall). */
+  const station = (type, F, L, side, u, v, extra = {}) => {
+    const [x, z] = L.map(u, v);
+    const st = { type, room: F.room.id, stand: new THREE.Vector3(x, F.y, z), heading: HEADING[side] + Math.PI, ...extra };
+    stations.push(st);
+    return st;
+  };
   const spotAt = (F, L, u, v, y) => {
     const [x, z] = L.map(u, v);
     F.surface(x, y, z);
@@ -621,7 +632,10 @@ export function buildWorld(scene, physics, seed) {
     L.box(M.cabinet, 0, 0, F.y, L.w, 0.58, F.y + 0.85, true);
     L.box(M.counter, 0, 0, F.y + 0.85, L.w, 0.62, F.y + 0.9);
     for (let u = 0.3; u < L.w - 0.3; u += 0.6) L.box(M.brass, u, 0.58, F.y + 0.7, u + 0.12, 0.6, F.y + 0.73);
-    if (L.w > 1.4) L.box(M.steel, L.w / 2 - 0.35, 0.1, F.y + 0.86, L.w / 2 + 0.35, 0.5, F.y + 0.905);
+    if (L.w > 1.4) {
+      L.box(M.steel, L.w / 2 - 0.35, 0.1, F.y + 0.86, L.w / 2 + 0.35, 0.5, F.y + 0.905);
+      station('dishes', F, L, r.side, L.w / 2, 0.62 + 0.42);
+    }
     F.surfaceRow(r, F.y + 0.9, 3);
   }
 
@@ -632,6 +646,7 @@ export function buildWorld(scene, physics, seed) {
     L.box(M.white, 0, 0, F.y, L.w, L.d, F.y + 0.9, true);
     L.box(M.black, 0.05, 0.05, F.y + 0.9, L.w - 0.05, L.d - 0.05, F.y + 0.92);
     L.box(M.black, 0.1, L.d, F.y + 0.25, L.w - 0.1, L.d + 0.01, F.y + 0.7);
+    station('cook', F, L, r.side, L.w / 2, L.d + 0.42);
   }
 
   /** Hollow cupboard with a hinged door; something may be hidden inside. */
@@ -746,7 +761,7 @@ export function buildWorld(scene, physics, seed) {
     return c;
   }
 
-  /** Tall wardrobe you can hide in. */
+  /** Tall wardrobe you can hide in, with two doors that swing open. */
   function wardrobe(F) {
     const r = F.againstWall(1.2, 0.62, true);
     if (!r) return;
@@ -754,24 +769,50 @@ export function buildWorld(scene, physics, seed) {
     const h = 2.1;
     L.box(M.darkwood, 0, 0, F.y, L.w, L.d - 0.03, F.y + h, true);
     L.box(M.darkwood, 0, L.d - 0.04, F.y + h - 0.08, L.w, L.d, F.y + h);
-    L.box(M.brass, L.w / 2 - 0.07, L.d, F.y + 1.0, L.w / 2 - 0.04, L.d + 0.02, F.y + 1.25);
-    L.box(M.brass, L.w / 2 + 0.04, L.d, F.y + 1.0, L.w / 2 + 0.07, L.d + 0.02, F.y + 1.25);
-    // The door face is a separate mesh so it can be targeted (and hidden while you're inside).
-    const [fx0, fz0] = L.map(0.02, L.d - 0.03);
-    const [fx1, fz1] = L.map(L.w - 0.02, L.d);
-    const face = new THREE.Mesh(
-      new THREE.BoxGeometry(Math.max(0.03, Math.abs(fx1 - fx0)), h - 0.1, Math.max(0.03, Math.abs(fz1 - fz0))),
-      M.darkwood,
-    );
-    face.position.set((fx0 + fx1) / 2, F.y + (h - 0.1) / 2, (fz0 + fz1) / 2);
-    face.castShadow = true;
-    scene.add(face);
-    const [ox, oz] = L.map(L.w / 2, L.d + 0.55);
-    const [ix, iz] = L.map(L.w / 2, L.d - 0.2);
-    const yaw = { N: Math.PI, S: 0, W: -Math.PI / 2, E: Math.PI / 2 }[r.side];
-    const spot = { face, out: new THREE.Vector3(ox, F.y, oz), inside: new THREE.Vector3(ix, F.y, iz), yaw };
-    face.userData.hide = spot;
-    dynamicMeshes.push(face);
+    // Doors live in a group whose local +z points out of the wardrobe.
+    const [fx, fz] = L.map(L.w / 2, L.d - 0.02);
+    const front = new THREE.Group();
+    front.position.set(fx, F.y, fz);
+    front.rotation.y = HEADING[r.side];
+    scene.add(front);
+    const hw = L.w / 2 - 0.01;
+    const panels = [];
+    const doorsP = [-1, 1].map((sign) => {
+      const pv = new THREE.Group();
+      pv.position.set(sign * (L.w / 2), 0.05, 0);
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(hw, h - 0.14, 0.03), M.darkwood);
+      panel.position.set(-sign * (hw / 2), (h - 0.14) / 2, 0.015);
+      panel.castShadow = true;
+      const knob = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.03), M.brass);
+      knob.position.set(-sign * (hw - 0.07), 1.0, 0.045);
+      pv.add(panel, knob);
+      front.add(pv);
+      panels.push(panel, knob);
+      return { pv, sign };
+    });
+    const [ox, oz] = L.map(L.w / 2, L.d + 0.6);
+    const [ix, iz] = L.map(L.w / 2, L.d - 0.25);
+    const spot = {
+      panels,
+      out: new THREE.Vector3(ox, F.y, oz),
+      inside: new THREE.Vector3(ix, F.y, iz),
+      yaw: HEADING[r.side] + Math.PI, // camera yaw looking out of the wardrobe
+      t: 0,
+      target: 0,
+      setVisible(v) {
+        for (const p of panels) p.visible = v;
+      },
+      update(dt) {
+        if (this.t === this.target) return;
+        this.t = this.t < this.target ? Math.min(1, this.t + dt * 5) : Math.max(0, this.t - dt * 5);
+        const e = this.t * this.t * (3 - 2 * this.t);
+        for (const d of doorsP) d.pv.rotation.y = d.sign * e * 1.75;
+      },
+    };
+    for (const p of panels) {
+      p.userData.hide = spot;
+      dynamicMeshes.push(p);
+    }
     hideSpots.push(spot);
   }
 
@@ -837,6 +878,9 @@ export function buildWorld(scene, physics, seed) {
     L.box(M.fabricBeige, 0.25, 0.3, F.y + 0.45, L.w / 2 - 0.02, L.d - 0.05, F.y + 0.58);
     L.box(M.fabricBeige, L.w / 2 + 0.02, 0.3, F.y + 0.45, L.w - 0.25, L.d - 0.05, F.y + 0.58);
     spotAt(F, L, L.w * 0.3, 0.6, F.y + 0.58);
+    const [sx, sz] = L.map(L.w * 0.65, 0.5);
+    const st = station('tv', F, L, r.side, L.w * 0.65, L.d + 0.5, { sit: new THREE.Vector3(sx, F.y, sz) });
+    st.heading = HEADING[r.side];
   }
 
   function armchair(F, mat) {
@@ -847,6 +891,9 @@ export function buildWorld(scene, physics, seed) {
     L.box(mat, 0, 0, F.y, L.w, 0.22, F.y + 0.95);
     L.box(mat, 0, 0, F.y, 0.15, L.d, F.y + 0.65);
     L.box(mat, L.w - 0.15, 0, F.y, L.w, L.d, F.y + 0.65);
+    const [sx, sz] = L.map(L.w / 2, 0.45);
+    const st = station('read', F, L, r.side, L.w / 2, L.d + 0.45, { sit: new THREE.Vector3(sx, F.y, sz) });
+    st.heading = HEADING[r.side];
   }
 
   function bookshelf(F, w = 1.4) {
@@ -891,6 +938,9 @@ export function buildWorld(scene, physics, seed) {
     L.box(M.pillow, 0.15, 0.1, y + 0.55, L.w - 0.15, 0.45, y + 0.68);
     L.box(M.darkwood, 0, 0, y, L.w, 0.06, y + 1.1);
     spotAt(F, L, L.w / 2, 1.3, y + 0.6);
+    // Lying down: feet at the foot of the bed, head on the pillow.
+    const [fx, fz] = L.map(L.w / 2, 2.05);
+    station('nap', F, L, r.side, L.w / 2, L.d + 0.45, { lie: new THREE.Vector3(fx, y + 0.78, fz), lieHeading: HEADING[r.side] });
     return r;
   }
 
@@ -906,6 +956,7 @@ export function buildWorld(scene, physics, seed) {
       const L = frame(toilet, toilet.side);
       L.box(M.porcelain, 0.05, 0.2, F.y, L.w - 0.05, L.d, F.y + 0.42, true);
       L.box(M.porcelain, 0, 0, F.y + 0.4, L.w, 0.2, F.y + 0.85);
+      station('pee', F, L, toilet.side, L.w / 2, L.d + 0.35);
     }
     const sink = F.againstWall(0.6, 0.45);
     if (sink) {
@@ -924,6 +975,7 @@ export function buildWorld(scene, physics, seed) {
     L.box(M.white, 0, 0, F.y, L.w, L.d, F.y + 0.9, true);
     L.box(M.darkGlass, 0.15, L.d, F.y + 0.3, L.w - 0.15, L.d + 0.01, F.y + 0.65);
     spotAt(F, L, L.w / 2, L.d / 2, F.y + 0.9);
+    station('laundry', F, L, r.side, L.w / 2, L.d + 0.42);
   }
 
   function workbench(F) {
@@ -936,6 +988,7 @@ export function buildWorld(scene, physics, seed) {
     L.box(M.plank, 0.1, 0, F.y + 1.2, L.w - 0.1, 0.03, F.y + 1.9);
     for (let u = 0.3; u < L.w - 0.3; u += 0.35) L.box(M.steel, u, 0.03, F.y + 1.4 + rng.range(0, 0.3), u + 0.04, 0.06, F.y + 1.7);
     F.surfaceRow(r, F.y + 0.92, 2);
+    station('hammer', F, L, r.side, L.w / 2, L.d + 0.42);
   }
 
   function boxes(F) {
@@ -956,6 +1009,8 @@ export function buildWorld(scene, physics, seed) {
     L.box(M.white, 0.05, 0.42, F.y + 0.75, L.w - 0.05, 0.6, F.y + 0.78);
     for (let u = 0.1; u < L.w - 0.1; u += 0.08) L.box(M.black, u, 0.45, F.y + 0.78, u + 0.03, 0.55, F.y + 0.8);
     spotAt(F, L, L.w / 2, 0.2, F.y + 1.25);
+    const [sx, sz] = L.map(L.w / 2, L.d + 0.3);
+    station('piano', F, L, r.side, L.w / 2, L.d + 0.55, { sit: new THREE.Vector3(sx, F.y, sz) });
   }
 
   function plant(F) {
@@ -1188,6 +1243,17 @@ export function buildWorld(scene, physics, seed) {
     pictures(F, rng.int(1, 3));
   }
 
+  // Sweeping: a few rooms, at the room's centre (always clear floor).
+  for (const room of rng.shuffle(plan.rooms.filter((r) => r.type !== 'stairs')).slice(0, 3)) {
+    stations.push({ type: 'sweep', room: room.id, stand: new THREE.Vector3(room.cx, floorY(room.floor), room.cz), heading: rng.range(0, 6.28) });
+  }
+  // The TV he watches is the one in the same room as the couch.
+  for (const st of stations) {
+    if (st.type !== 'tv') continue;
+    const room = plan.rooms[st.room];
+    st.app = appliances.find((a) => a.kind === 'tv' && a.pos.x > room.x0 && a.pos.x < room.x1 && a.pos.z > room.z0 && a.pos.z < room.z1 && Math.abs(a.pos.y - floorY(room.floor)) < 2) || null;
+  }
+
   const staticMeshes = B.build(scene);
 
   // =================================================================
@@ -1383,6 +1449,70 @@ export function buildWorld(scene, physics, seed) {
   odeco(M.hedge, -38.5, 0, 29.5, 38.5, 2, 30.5);
   odeco(M.hedge, -38.5, 0, -40.5, -37.5, 2, 30.5);
   odeco(M.hedge, 37.5, 0, -40.5, 38.5, 2, 30.5);
+  // Flower bed by the front wall, for watering.
+  const bedX = fd + (fd + 4 < HX1 - 0.5 ? 2.6 : -4.1);
+  odeco(M.darkwood, bedX, 0, HZ1 + 0.13, bedX + 1.5, 0.18, HZ1 + 0.6);
+  for (let k = 0; k < 5; k++) {
+    const c = [0xe74c3c, 0xf1c40f, 0x9b59b6, 0xff8fb1, 0xffffff][k];
+    OB.mesh(M.plant, new THREE.CylinderGeometry(0.015, 0.015, 0.3, 4), bedX + 0.2 + k * 0.28, 0.3, HZ1 + 0.37);
+    const bloom = new THREE.Mesh(new THREE.IcosahedronGeometry(0.08, 0), new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
+    bloom.position.set(bedX + 0.2 + k * 0.28, 0.48, HZ1 + 0.37);
+    scene.add(bloom);
+  }
+  stations.push({ type: 'water', room: -1, stand: new THREE.Vector3(bedX + 0.75, 0, HZ1 + 1.35), heading: Math.PI });
+  // Checking the mail (reaching over the fence).
+  stations.push({ type: 'mailbox', room: -1, stand: new THREE.Vector3(2.35, 0, -6.55), heading: 0 });
+  // Somewhere to pee if the house has no bathroom (he's not fussy).
+  if (!stations.some((st) => st.type === 'pee')) {
+    const nw = nodeById.get('yNW');
+    stations.push({ type: 'pee', room: -1, stand: new THREE.Vector3(nw.x - 1.8, 0, nw.z - 1.8), heading: Math.atan2(-1, -1) });
+  }
+  // Lawnmower: pushed around the house along the yard route.
+  const mower = new THREE.Group();
+  const mowerRed = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.5, metalness: 0.3 });
+  const mowerBlack = new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.8 });
+  const mb = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.25, 0.6), mowerRed);
+  mb.position.y = 0.2;
+  mower.add(mb);
+  for (const [x, z] of [[-0.28, -0.22], [0.28, -0.22], [-0.28, 0.22], [0.28, 0.22]]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05, 10), mowerBlack);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(x, 0.1, z);
+    mower.add(w);
+  }
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.04), mowerBlack);
+  handle.position.set(0, 0.95, -0.6);
+  mower.add(handle);
+  for (const x of [-0.24, 0.24]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.95), mowerBlack);
+    bar.position.set(x, 0.62, -0.38);
+    bar.rotation.x = 0.85;
+    mower.add(bar);
+  }
+  mower.traverse((o) => { o.castShadow = true; });
+  const ring = ['ySE', 'yE', 'yNE', 'yN', 'yNW', 'yW', 'ySW'].map((id) => nodeById.get(id)).map((nd) => new THREE.Vector3(nd.x, 0, nd.z));
+  const startN = ring[0];
+  mower.position.set(startN.x, 0, startN.z - 0.95);
+  mower.rotation.y = Math.PI;
+  scene.add(mower);
+  stations.push({
+    type: 'mow',
+    room: -1,
+    mower,
+    stand: new THREE.Vector3(startN.x, 0, startN.z),
+    heading: Math.PI,
+    // Half a lap around the house from wherever the mower is.
+    route() {
+      let best = 0;
+      for (let i = 1; i < ring.length; i++) if (ring[i].distanceTo(mower.position) < ring[best].distanceTo(mower.position)) best = i;
+      // Walk along the ring (never across the front garden), turning back at the ends.
+      const dir = best + 4 < ring.length ? 1 : -1;
+      const out = [];
+      for (let k = 1; k <= 4; k++) out.push(ring[best + dir * k]);
+      return out;
+    },
+  });
+
   staticMeshes.push(...OB.build(scene));
 
   // =================================================================
@@ -1481,6 +1611,7 @@ export function buildWorld(scene, physics, seed) {
   function update(dt, cam) {
     for (const d of doors) d.update(dt);
     for (const c of containers) c.update(dt);
+    for (const h of hideSpots) h.update(dt);
     staticTimer -= dt;
     if (staticTimer <= 0 && cam && (cam.y < 0.6 || appliances.some((a) => a.on && a.kind === 'tv'))) {
       T.updateStatic();
@@ -1509,6 +1640,7 @@ export function buildWorld(scene, physics, seed) {
     containers,
     hideSpots,
     appliances,
+    stations,
     staticMeshes,
     dynamicMeshes,
     sun,

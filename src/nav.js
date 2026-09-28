@@ -41,6 +41,35 @@ export class Nav {
     return true;
   }
 
+  /** Like clear(), but for a body `r` wide: also checks two parallel lines either side. */
+  clearWide(p, q, r = 0.34) {
+    if (!this.clear(p, q)) return false;
+    const dx = q.x - p.x;
+    const dz = q.z - p.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const ox = (-dz / len) * r;
+    const oz = (dx / len) * r;
+    for (const s of [-1, 1]) {
+      if (!this.clear({ x: p.x + ox * s, y: p.y, z: p.z + oz * s }, { x: q.x + ox * s, y: q.y, z: q.z + oz * s })) return false;
+    }
+    return true;
+  }
+
+  /** Nearest waypoint on the same floor with a body-wide straight approach to p. */
+  approachTo(p, maxDist = 9) {
+    let best = null;
+    let bestD = maxDist * maxDist;
+    for (const n of this.nodes.values()) {
+      if (Math.abs(n.pos.y - p.y) > 0.8) continue;
+      const d = n.pos.distanceToSquared(p);
+      if (d < bestD && this.clearWide(n.pos, p)) {
+        best = n.id;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
   nearest(p, requireClear = true) {
     let best = null;
     let bestD = Infinity;

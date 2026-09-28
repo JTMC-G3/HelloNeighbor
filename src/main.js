@@ -73,6 +73,12 @@ class Game {
     this.neighbor = new Neighbor(scene, this.world.textures, this.physics, this.nav, this.sound);
     const nd = this.world.navData;
     this.neighbor.setRoutes(nd.patrol, nd.home, nd.guard);
+    // Chores he can actually walk to in this house.
+    this.neighbor.setChores(this.world.stations.filter((st) => {
+      if (!this.physics.circleFree(st.stand, 0.34)) return false;
+      st.via = this.nav.approachTo(st.stand);
+      return !!st.via;
+    }));
     for (const el of document.querySelectorAll('.seedLabel')) el.textContent = `House #${this.seed}`;
     this.player.spawn(SPAWN, 0);
 
@@ -502,6 +508,7 @@ class Game {
 
   interact() {
     const p = this.player;
+    if (this.hideAnim) return;
     if (p.hidden) {
       this.leaveHiding();
       return;
@@ -564,34 +571,82 @@ class Game {
   }
 
   // ------------------------------------------------------------- hiding
+  /** Climb into a wardrobe: doors open, you step in and turn around, doors close (0.7 s). */
   hide(spot) {
     const p = this.player;
-    const n = this.neighbor;
-    // If he watched you climb in, he knows exactly where you are.
-    n.sawHide = n.sees || (n.state === 'chase' && n.lost < 0.8);
-    p.hidden = spot;
+    if (this.hideAnim || p.hidden) return;
     p.keys.clear();
     p.ch.vel.set(0, 0, 0);
-    p.ch.pos.copy(spot.inside);
     p.crouching = false;
-    p.yaw = spot.yaw;
-    p.pitch = -0.05;
-    spot.face.visible = false;
-    this.sound.door(spot.inside, false);
-    $('hideOverlay').classList.remove('hidden');
+    this.hideAnim = { spot, dir: 'in', t: 0, from: p.ch.pos.clone(), yaw0: p.yaw, pitch0: p.pitch, seen: false };
+    spot.target = 1;
+    this.sound.door(spot.inside, true);
   }
 
+  /** Climb back out (0.5 s). */
   leaveHiding() {
     const p = this.player;
     const spot = p.hidden;
-    if (!spot) return;
+    if (!spot || this.hideAnim) return;
     p.hidden = null;
-    p.ch.pos.copy(spot.out);
-    p.ch.vel.set(0, 0, 0);
-    spot.face.visible = true;
     this.neighbor.sawHide = false;
-    this.sound.door(spot.out, true);
+    spot.setVisible(true);
+    spot.target = 1;
     $('hideOverlay').classList.add('hidden');
+    this.hideAnim = { spot, dir: 'out', t: 0, from: p.ch.pos.clone(), yaw0: p.yaw, pitch0: p.pitch };
+    this.sound.door(spot.out, true);
+  }
+
+  updateHideAnim(dt) {
+    const a = this.hideAnim;
+    const p = this.player;
+    const n = this.neighbor;
+    const { spot } = a;
+    a.t += dt;
+    const ease = (x) => THREE.MathUtils.smoothstep(x, 0, 1);
+    const turn = (from, to, k) => from + Math.atan2(Math.sin(to - from), Math.cos(to - from)) * k;
+    if (a.dir === 'in') {
+      // 0-0.25 doors swing open, 0.1-0.5 step in and turn round, 0.45-0.7 pull the doors shut.
+      if (n.sees) a.seen = true;
+      const k = ease((a.t - 0.1) / 0.4);
+      p.ch.pos.lerpVectors(a.from, spot.inside, k);
+      p.yaw = turn(a.yaw0, spot.yaw, k);
+      p.pitch = THREE.MathUtils.lerp(a.pitch0, -0.05, k);
+      if (a.t > 0.45 && spot.target !== 0) {
+        spot.target = 0;
+        this.sound.door(spot.inside, false);
+      }
+      if (a.t >= 0.7) {
+        this.hideAnim = null;
+        p.hidden = spot;
+        spot.setVisible(false);
+        $('hideOverlay').classList.remove('hidden');
+        // If he watched you climb in, he knows exactly where you are.
+        n.sawHide = a.seen || n.sees || (n.state === 'chase' && n.lost < 0.8);
+      }
+    } else {
+      const k = ease((a.t - 0.08) / 0.3);
+      p.ch.pos.lerpVectors(a.from, spot.out, k);
+      if (a.t > 0.35 && spot.target !== 0) {
+        spot.target = 0;
+        this.sound.door(spot.out, false);
+      }
+      if (a.t >= 0.5) {
+        this.hideAnim = null;
+        p.ch.pos.copy(spot.out);
+      }
+    }
+    p.ch.vel.set(0, 0, 0);
+    p.syncCamera(dt);
+  }
+
+  /** The neighbor yanks open the wardrobe you're hiding in. */
+  openCloset(spot) {
+    spot.setVisible(true);
+    spot.target = 1;
+    $('hideOverlay').classList.add('hidden');
+    this.sound.door(spot.out, true);
+    this.sound.alert();
   }
 
   // --------------------------------------------------------- appliances
@@ -610,8 +665,8 @@ class Game {
       if (app.timer <= 0) {
         app.timer = 1.4;
         this.sound.appliance(app.pos, app.kind);
-        // Loud enough to draw him over from anywhere in the house.
-        this.emitNoise(app.pos, 22);
+        // Loud enough to draw him over from anywhere in the house (unless he's the one watching).
+        if (!app.byNeighbor) this.emitNoise(app.pos, 22);
       }
     }
   }
@@ -671,7 +726,7 @@ class Game {
 
   throwHeld() {
     const it = this.player.held;
-    if (!it || this.player.hidden) return;
+    if (!it || this.player.hidden || this.hideAnim) return;
     this.release(it, false);
     const dir = this.camera.getWorldDirection(new THREE.Vector3());
     const power = it.radius > 0.2 ? 10 : 14;
@@ -792,7 +847,24 @@ class Game {
     this.player.keys.clear();
     this.sound.caught();
     this.sound.setChase(false);
-    if (this.player.hidden) this.leaveHiding();
+    // Dragged out of a wardrobe (or grabbed mid-climb).
+    const p = this.player;
+    this.pulledFrom = null;
+    if (this.hideAnim) {
+      this.hideAnim.spot.setVisible(true);
+      this.hideAnim.spot.target = 1;
+      this.pulledFrom = this.hideAnim.spot;
+      this.hideAnim = null;
+    }
+    if (p.hidden) {
+      this.pulledFrom = p.hidden;
+      p.hidden.setVisible(true);
+      p.hidden.target = 1;
+      p.hidden = null;
+      $('hideOverlay').classList.add('hidden');
+    }
+    this.pullFrom = p.ch.pos.clone();
+    this.shakeSeed = Math.random() * 100;
     const held = this.player.held;
     if (held) {
       this.release(held, true);
@@ -803,37 +875,62 @@ class Game {
     }
   }
 
+  /**
+   * Getting caught: he lunges, grabs you, lifts you up and shakes you, then
+   * everything goes black. ~1.8 s before the fade, 3.2 s in total.
+   */
   updateCaught(dt) {
+    const t0 = this.caughtT;
     this.caughtT += dt;
+    const t = this.caughtT;
     const p = this.player;
     const n = this.neighbor;
-    // Turn to face him.
+    if (t0 < 0.3 && t >= 0.3) this.sound.grab();
+
+    // Pulled out of the wardrobe towards him.
+    if (this.pulledFrom) {
+      const k = THREE.MathUtils.smoothstep(t, 0, 0.4);
+      p.ch.pos.lerpVectors(this.pullFrom, this.pulledFrom.out, k);
+    }
+
+    // Snap your view to his face.
     const head = n.eye(new THREE.Vector3());
     const eye = p.eye(new THREE.Vector3());
     const dx = head.x - eye.x;
     const dz = head.z - eye.z;
+    const dist = Math.hypot(dx, dz) || 1;
     const yaw = Math.atan2(-dx, -dz);
-    const pitch = Math.atan2(head.y - eye.y, Math.hypot(dx, dz));
-    let dy = yaw - p.yaw;
-    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-    p.yaw += dy * Math.min(1, dt * 8);
-    p.pitch += (pitch - p.pitch) * Math.min(1, dt * 8);
-    p.ch.vel.set(0, p.ch.vel.y, 0);
-    this.physics.moveCharacter(p.ch, dt);
+    const pitch = Math.atan2(head.y - eye.y - p.camOffset.y, dist);
+    const turnK = Math.min(1, dt * 14);
+    p.yaw += Math.atan2(Math.sin(yaw - p.yaw), Math.cos(yaw - p.yaw)) * turnK;
+    p.pitch += (pitch - p.pitch) * turnK;
+
+    // Lifted off your feet and shaken, then thrown down.
+    const lift = THREE.MathUtils.smoothstep(t, 0.3, 0.75) * (1 - THREE.MathUtils.smoothstep(t, 1.3, 1.6));
+    const shakeAmt = t < 0.3 ? 0.02 : t < 1.3 ? 0.06 : 0.02;
+    const r = (k) => Math.sin(this.shakeSeed + t * (37 + k * 11)) * shakeAmt;
+    p.camOffset.set((dx / dist) * 0.3 * lift + r(1), 0.4 * lift + r(2), (dz / dist) * 0.3 * lift + r(3));
+    p.roll = t < 1.3 ? Math.sin(t * 25) * 0.06 * lift : THREE.MathUtils.lerp(0, 0.7, THREE.MathUtils.smoothstep(t, 1.3, 1.7));
+    if (t > 1.3) p.pitch -= dt * 1.2;
+    p.ch.vel.set(0, 0, 0);
+    if (!this.pulledFrom) this.physics.moveCharacter(p.ch, dt);
     p.syncCamera(dt);
 
     const fade = $('fade');
-    if (this.caughtT > 0.9) {
-      fade.style.opacity = String(Math.min(1, (this.caughtT - 0.9) * 2));
-      $('caughtText').classList.remove('hidden');
-    }
-    if (this.caughtT > 3.2) {
+    if (t > 1.35) fade.style.opacity = String(Math.min(1, (t - 1.35) * 2.2));
+    if (t > 1.45) $('caughtText').classList.remove('hidden');
+    if (t > 3.2) {
       $('caughtText').classList.add('hidden');
       p.spawn(SPAWN, 0);
       n.reset();
       for (const d of this.world.doors) {
         if (d.id === 'front') d.setOpen(false);
       }
+      for (const h of this.world.hideSpots) {
+        h.target = 0;
+        h.setVisible(true);
+      }
+      this.pulledFrom = null;
       this.state = 'playing';
       this.fadeOut = 1;
       if (this.catches === 1) this.toast('You woke up back home. Try again, quieter this time.');
@@ -906,7 +1003,9 @@ class Game {
       this.neighbor.update(dt, p, this);
     } else if (this.state === 'playing') {
       this.playTime += dt;
-      if (p.hidden) {
+      if (this.hideAnim) {
+        this.updateHideAnim(dt);
+      } else if (p.hidden) {
         // Peeking out of a wardrobe: look around a little, no moving.
         let d = p.yaw - p.hidden.yaw;
         d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -924,7 +1023,7 @@ class Game {
         if (it.container) it.mesh.visible = it.container.t > 0.25;
       }
       for (const nz of this.noises) {
-        if (nz.pos.distanceTo(this.neighbor.pos) < nz.radius) this.neighbor.hear(nz.pos, this);
+        if (nz.pos.distanceTo(this.neighbor.pos) < nz.radius) this.neighbor.hear(nz.pos, this, nz.radius);
       }
       this.noises.length = 0;
       this.neighbor.update(dt, p, this);

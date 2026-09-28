@@ -216,6 +216,16 @@ export class Physics {
     }
   }
 
+  /** Is there room for a body of radius r standing at p (ignoring doors and low stuff)? */
+  circleFree(p, r, y0 = 0.45, y1 = 1.9) {
+    for (const c of this.near(p.x - r, p.z - r, p.x + r, p.z + r)) {
+      if (!c.enabled || c.kind === 'door') continue;
+      if (c.max.y <= p.y + y0 || c.min.y >= p.y + y1) continue;
+      if (circleRect(p.x, p.z, r, c)) return false;
+    }
+    return true;
+  }
+
   /** Highest walkable surface under (x, z) at or below y. */
   groundBelow(x, y, z) {
     let g = this.terrainAt(x, z);

@@ -81,7 +81,11 @@ There are no objectives or hints. Exploring and figuring things out is the game.
   he is. When it turns red he's chasing you, so break line of sight or get off his property.
 * Footsteps make noise. Sprinting is loud, walking is quieter, and crouching is silent.
 * Cupboards, fridges and chests open, and things are often tucked away inside.
-* You can hide in wardrobes, as long as he didn't watch you climb in.
+* You can hide in wardrobes. If he watched you climb in, he'll yank the doors open and drag
+  you out.
+* He has a life: he naps, watches TV, reads, does the dishes, cooks, uses the toilet, mows the
+  lawn, waters the flowers, checks the mail and more. Busy (or asleep) is your chance, but he
+  still looks up, and he still hears loud noises.
 * TVs and radios make a racket when switched on, and he'll come to turn them off.
 * Throw an object at him to stun him for a couple of seconds.
 * If he catches you, you wake up back in front of your own house. Doors you've opened stay
@@ -129,6 +133,7 @@ src/world.js          Builds the generated house (walls, stairs, basement, furni
 src/builder.js        Merged static geometry, materials
 src/rng.js            Seeded random numbers (so a house can be replayed)
 src/neighbor.js       Neighbor model, vision/hearing, patrol/investigate/chase AI
+src/chores.js         The neighbor's everyday chores (poses, props, sounds)
 src/nav.js            Waypoint graph + pathfinding for the neighbor
 src/player.js         First-person controller (walk, sprint, crouch, jump)
 src/physics.js        AABB collision (grid broadphase) for characters and sphere items

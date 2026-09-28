@@ -241,6 +241,64 @@ export class Sound {
     }
   }
 
+  /** Sounds of the neighbor going about his day, from where he is. */
+  chore(kind, pos) {
+    if (!this.ok()) return;
+    const { node, gain } = this.out(pos, 0.8, 28);
+    if (gain < 0.001) return;
+    switch (kind) {
+      case 'trickle':
+        this.noise(node, { dur: 0.7, type: 'bandpass', freq: 2400, q: 1.5, gain: 0.35, attack: 0.05 });
+        break;
+      case 'splash':
+        this.noise(node, { dur: 0.35, type: 'bandpass', freq: 1200, freqEnd: 600, q: 1, gain: 0.5 });
+        this.tone(node, { t: 0.1, freq: 900 + Math.random() * 400, freqEnd: 500, dur: 0.1, gain: 0.08 });
+        break;
+      case 'sizzle':
+        this.noise(node, { dur: 1.1, type: 'highpass', freq: 4000, gain: 0.25, attack: 0.1 });
+        break;
+      case 'snore':
+        this.noise(node, { dur: 1.2, type: 'lowpass', freq: 260, freqEnd: 140, gain: 1, attack: 0.5 });
+        this.tone(node, { type: 'sawtooth', freq: 70, freqEnd: 55, dur: 1.1, gain: 0.08, attack: 0.5 });
+        break;
+      case 'piano': {
+        const notes = [261.6, 293.7, 311.1, 349.2, 392, 415.3, 466.2, 523.3];
+        const f = notes[(Math.random() * notes.length) | 0];
+        this.tone(node, { type: 'triangle', freq: f, dur: 0.6, gain: 0.25 });
+        this.tone(node, { type: 'sine', freq: f * 2, dur: 0.4, gain: 0.08 });
+        break;
+      }
+      case 'clang':
+        this.tone(node, { freq: 1900 + Math.random() * 300, dur: 0.25, gain: 0.25 });
+        this.noise(node, { dur: 0.05, type: 'highpass', freq: 3000, gain: 0.8 });
+        break;
+      case 'rumble':
+        this.noise(node, { dur: 1.0, type: 'lowpass', freq: 180, gain: 0.8, attack: 0.1 });
+        break;
+      case 'brush':
+        this.noise(node, { dur: 0.3, type: 'bandpass', freq: 3000, freqEnd: 1500, q: 0.8, gain: 0.3, attack: 0.08 });
+        break;
+      case 'engine':
+        this.tone(node, { type: 'sawtooth', freq: 58 + Math.random() * 4, dur: 0.5, gain: 0.14, attack: 0.02 });
+        this.noise(node, { dur: 0.5, type: 'lowpass', freq: 600, gain: 0.5 });
+        break;
+      case 'paper':
+        this.noise(node, { dur: 0.25, type: 'highpass', freq: 2500, gain: 0.3, attack: 0.03 });
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** The neighbor grabbing you. */
+  grab() {
+    if (!this.ok()) return;
+    const { node } = this.out(null, 1);
+    this.noise(node, { dur: 0.25, type: 'lowpass', freq: 900, gain: 1.2 });
+    this.tone(node, { type: 'sawtooth', freq: 110, freqEnd: 70, dur: 0.9, gain: 0.25, attack: 0.02 });
+    this.tone(node, { type: 'sawtooth', freq: 165, freqEnd: 98, dur: 0.9, gain: 0.15, attack: 0.02 });
+  }
+
   caught() {
     if (!this.ok()) return;
     const { node } = this.out(null, 1);

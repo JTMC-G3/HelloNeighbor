@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { bakeChildren } from './quality.js';
+import { CHORES, makeProp } from './chores.js';
 
 const WALK = 2.3;
 const RUN = 5.05;
@@ -115,7 +116,16 @@ export class Neighbor {
     this.eyeV = new THREE.Vector3();
     this.tmp = new THREE.Vector3();
     this.tmp2 = new THREE.Vector3();
+    this.model.root.rotation.order = 'YXZ';
+    this.stations = [];
+    this.task = null;
+    this.lastChore = null;
     this.reset();
+  }
+
+  /** Places he can do chores at (see chores.js), found by world.js. */
+  setChores(stations) {
+    this.stations = stations;
   }
 
   /** Patrol targets ([nodeId, weight]) and home/guard nodes come from the generated house. */
@@ -127,6 +137,9 @@ export class Neighbor {
   }
 
   reset() {
+    if (this.task) this.endTask(true);
+    this.closet = null;
+    this.catchT = 0;
     this.ch.pos.copy(this.nav.pos(this.home || this.nav.nodes.keys().next().value));
     this.ch.vel.set(0, 0, 0);
     this.state = 'patrol';
@@ -180,9 +193,9 @@ export class Neighbor {
     return !this.physics.segmentBlocked(e, this.tmp2, visionFilter);
   }
 
-  setPathTo(target) {
+  setPathTo(target, via = null) {
     const from = this.nav.nearest(this.ch.pos);
-    const to = this.nav.nearest(target);
+    const to = via || this.nav.nearest(target);
     const ids = this.nav.path(from, to) || [from];
     const pts = ids.map((id) => this.nav.pos(id));
     // Skip the first node if we can already head straight for the second.
@@ -261,13 +274,100 @@ export class Neighbor {
   }
 
   startPatrol() {
+    if (this.task) this.endTask(true);
+    if (this.stations.length && Math.random() < 0.55 && this.startTask()) return;
     this.state = 'patrol';
     this.goal = this.pickPatrol();
     this.setPathToNode(this.goal);
     this.wait = 0;
   }
 
+  // ------------------------------------------------------------ chores
+  startTask() {
+    const options = this.stations.filter((s) => s.type !== this.lastChore && CHORES[s.type]);
+    if (!options.length) return false;
+    const station = options[Math.floor(Math.random() * options.length)];
+    const chore = CHORES[station.type];
+    this.lastChore = station.type;
+    this.state = 'task';
+    this.task = { station, chore, phase: 'goto', t: 0, soundT: 0, prop: null, dur: chore.dur[0] + Math.random() * (chore.dur[1] - chore.dur[0]) };
+    this.setPathTo(station.stand, station.via);
+    return true;
+  }
+
+  holdProp(task, type, hand = 0) {
+    const prop = makeProp(type);
+    prop.position.set(0, -0.68, 0.02);
+    this.model.arms[hand].add(prop);
+    task.prop = prop;
+  }
+
+  beginTaskAction(game) {
+    const task = this.task;
+    const { station, chore } = task;
+    task.phase = 'do';
+    task.t = 0;
+    this.ch.vel.set(0, 0, 0);
+    if (!chore.walks) {
+      this.ch.pos.x = station.stand.x;
+      this.ch.pos.z = station.stand.z;
+    }
+    this.heading = station.heading;
+    if (chore.prop) this.holdProp(task, chore.prop, chore.hand || 0);
+    if (chore.start) chore.start(this, game, task);
+  }
+
+  /** Stops the current chore (finished, or interrupted when abort is true). */
+  endTask(abort = false) {
+    const task = this.task;
+    if (!task) return;
+    this.task = null;
+    if (task.prop) task.prop.parent.remove(task.prop);
+    if (task.chore.end && this.gameRef) task.chore.end(this, this.gameRef, task);
+    if (task.phase === 'do' && task.chore.fixed) this.ch.pos.copy(task.station.stand);
+    if (task.chore.fixed) this.ch.vel.set(0, 0, 0);
+    void abort;
+  }
+
+  updateTask(dt, game) {
+    const task = this.task;
+    if (task.phase === 'goto') {
+      task.t += dt;
+      if (task.t > 35) {
+        // Couldn't get there (a door he can't open?): forget it.
+        this.finishTask();
+        return false;
+      }
+      if (this.followPath(WALK, dt)) {
+        // Close enough to the spot (or as close as the route gets)?
+        const s = task.station.stand;
+        if (Math.hypot(s.x - this.ch.pos.x, s.z - this.ch.pos.z) < 1.2 && Math.abs(s.y - this.ch.pos.y) < 1) this.beginTaskAction(game);
+        else this.finishTask();
+      }
+      return true;
+    }
+    task.t += dt;
+    if (!task.chore.walks) this.stop(dt);
+    if (task.chore.sound) {
+      task.soundT -= dt;
+      if (task.soundT <= 0) {
+        task.soundT = task.chore.sound[1] * (0.8 + Math.random() * 0.4);
+        this.sound.chore(task.chore.sound[0], this.ch.pos);
+      }
+    }
+    const done = task.chore.update ? task.chore.update(this, dt, game, task) : false;
+    if (done || task.t > task.dur) this.finishTask();
+    return task.chore.walks;
+  }
+
+  finishTask() {
+    this.endTask(false);
+    this.state = 'patrol';
+    this.wait = 1 + Math.random() * 2;
+  }
+
   investigate(pos, lookTime = 3) {
+    if (this.task) this.endTask(true);
     this.state = 'investigate';
     this.investigatePos.copy(pos);
     this.setPathTo(pos);
@@ -276,7 +376,8 @@ export class Neighbor {
   }
 
   startChase(game) {
-    if (this.state === 'chase') return;
+    if (this.state === 'chase' || this.state === 'openCloset') return;
+    if (this.task) this.endTask(true);
     this.state = 'chase';
     this.lost = 0;
     this.repath = 0;
@@ -287,6 +388,7 @@ export class Neighbor {
 
   hit(game, player) {
     if (this.state === 'stunned') return;
+    if (this.task) this.endTask(true);
     this.state = 'stunned';
     this.stun = 2.2;
     this.sound.grunt(this.ch.pos);
@@ -294,9 +396,13 @@ export class Neighbor {
     game.toast('Bonk! That stunned him for a moment.');
   }
 
-  hear(pos, game) {
-    if (this.state === 'chase' || this.state === 'stunned') return;
+  hear(pos, game, radius = Infinity) {
+    if (this.state === 'chase' || this.state === 'stunned' || this.state === 'openCloset') return;
     if (!game.onProperty(pos)) return;
+    // Asleep, or deafened by his own lawnmower: only loud or close noises get through.
+    const t = this.task && this.task.phase === 'do' ? this.task.chore : null;
+    const factor = t ? (t.asleep ? 0.35 : t.deaf || 1) : 1;
+    if (pos.distanceTo(this.ch.pos) > radius * factor) return;
     this.awareness = Math.max(this.awareness, 0.4);
     this.investigate(pos, 3.5);
   }
@@ -344,15 +450,22 @@ export class Neighbor {
 
   update(dt, player, game) {
     this.playerRef = player;
+    this.gameRef = game;
     this.doorsRef = game.world.doors;
 
     if (game.state === 'caught') {
-      this.stop(dt);
-      this.physics.moveCharacter(this.ch, dt);
+      if (this.task) this.endTask(true);
+      // Lunge in close, then hold on.
       const dx = player.pos.x - this.ch.pos.x;
       const dz = player.pos.z - this.ch.pos.z;
-      this.turnTo(Math.atan2(dx, dz), dt, 10);
+      const d = Math.hypot(dx, dz);
+      if (d > 0.8 && game.caughtT < 0.35) this.moveToward(player.pos, 4, dt);
+      else this.stop(dt);
+      this.physics.moveCharacter(this.ch, dt);
+      this.turnTo(Math.atan2(dx, dz), dt, 14);
       this.grabbing = true;
+      this.catchT = game.caughtT;
+      this.speed = 0;
       this.animate(dt);
       return;
     }
@@ -367,7 +480,8 @@ export class Neighbor {
     const onProp = game.onProperty(player.pos);
 
     // ---- perception
-    this.sees = this.state !== 'stunned' && this.canSee(player);
+    const asleep = this.task && this.task.phase === 'do' && this.task.chore.asleep;
+    this.sees = this.state !== 'stunned' && !asleep && this.canSee(player);
     if (this.sees) {
       this.lastSeen.copy(player.pos);
       if (onProp) {
@@ -387,7 +501,7 @@ export class Neighbor {
 
     // Bumping into him is a bad idea.
     const findable = !player.hidden || this.sawHide;
-    if (toP < 0.95 && dy < 1.3 && this.state !== 'stunned' && onProp && findable) this.startChase(game);
+    if (toP < 0.95 && dy < 1.3 && this.state !== 'stunned' && onProp && findable && !player.hidden) this.startChase(game);
 
     let trying = false;
     switch (this.state) {
@@ -406,6 +520,19 @@ export class Neighbor {
           trying = true;
           if (this.followPath(WALK, dt)) this.wait = 2 + Math.random() * 3.5;
         }
+        break;
+      }
+      case 'task': {
+        trying = this.updateTask(dt, game) && this.task && this.task.phase === 'goto';
+        break;
+      }
+      case 'openCloset': {
+        // He saw you climb in: yank the wardrobe open, then grab you.
+        this.stop(dt);
+        const c = this.closet;
+        this.turnTo(Math.atan2(c.inside.x - this.ch.pos.x, c.inside.z - this.ch.pos.z), dt, 10);
+        this.closetT += dt;
+        if (this.closetT > 0.55) game.caught();
         break;
       }
       case 'investigate': {
@@ -440,22 +567,35 @@ export class Neighbor {
           this.investigate(this.lastSeen, 4);
           break;
         }
+        // If he watched you hide, he heads for the wardrobe doors.
+        const inCloset = player.hidden && this.sawHide ? player.hidden : null;
+        const goal = inCloset ? inCloset.out : player.pos;
+        if (inCloset) {
+          this.lost = 0;
+          if (Math.hypot(goal.x - this.ch.pos.x, goal.z - this.ch.pos.z) < 0.7 && Math.abs(goal.y - this.ch.pos.y) < 1) {
+            this.state = 'openCloset';
+            this.closet = inCloset;
+            this.closetT = 0;
+            game.openCloset(inCloset);
+            break;
+          }
+        }
         this.directTimer -= dt;
         if (this.directTimer <= 0) {
-          this.direct = this.forcePath <= 0 && dy < 1.6 && this.nav.clear(this.ch.pos, player.pos);
+          this.direct = this.forcePath <= 0 && Math.abs(goal.y - this.ch.pos.y) < 1.6 && this.nav.clear(this.ch.pos, goal);
           this.directTimer = 0.2;
         }
         this.forcePath -= dt;
         trying = true;
-        if (this.direct && this.lost < 0.6) {
-          this.moveToward(player.pos, RUN, dt);
+        if (this.direct && (this.lost < 0.6 || inCloset)) {
+          this.moveToward(goal, RUN, dt);
         } else {
           this.repath -= dt;
           if (this.repath <= 0) {
-            this.setPathTo(this.sees ? player.pos : this.lastSeen);
+            this.setPathTo(this.sees || inCloset ? goal : this.lastSeen);
             this.repath = 0.6;
           }
-          if (this.followPath(RUN, dt) && !this.sees) this.investigate(this.lastSeen, 4);
+          if (this.followPath(RUN, dt) && !this.sees && !inCloset) this.investigate(this.lastSeen, 4);
         }
         break;
       }
@@ -472,7 +612,8 @@ export class Neighbor {
         break;
     }
 
-    this.physics.moveCharacter(this.ch, dt);
+    const planted = this.task && this.task.phase === 'do' && this.task.chore.fixed;
+    if (!planted) this.physics.moveCharacter(this.ch, dt);
     this.speed = Math.hypot(this.ch.vel.x, this.ch.vel.z);
     this.handleDoors(dt);
     this.checkStuck(dt, trying);
@@ -480,7 +621,7 @@ export class Neighbor {
     if (this.ch.pos.y < -10) this.reset();
 
     // Catch.
-    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && findable) game.caught();
+    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && !player.hidden) game.caught();
 
     this.animate(dt);
   }
@@ -488,7 +629,25 @@ export class Neighbor {
   animate(dt) {
     const m = this.model;
     m.root.position.copy(this.ch.pos);
-    m.root.rotation.y = this.heading;
+    m.root.rotation.set(0, this.heading, 0);
+    m.body.position.y = 0;
+    m.head.rotation.set(0, 0, 0);
+    m.torso.rotation.set(0, 0, 0);
+    for (const a of m.arms) a.rotation.set(0, 0, 0);
+    const task = this.task && this.task.phase === 'do' ? this.task : null;
+    if (task && task.chore.fixed) {
+      // Sitting on a couch / lying in bed: planted on the furniture.
+      const st = task.station;
+      if (task.chore.fixed === 'lie') {
+        m.root.position.copy(st.lie);
+        m.root.rotation.set(-Math.PI / 2, st.lieHeading, 0);
+        m.legs[0].rotation.x = m.legs[1].rotation.x = 0;
+      } else {
+        m.root.position.copy(st.sit || st.stand);
+      }
+      task.chore.pose(m, task.t);
+      return;
+    }
     const sp = this.speed;
     const run = sp > 3.5;
     const prev = this.phase;
@@ -498,9 +657,17 @@ export class Neighbor {
     m.legs[0].rotation.x = s * swing;
     m.legs[1].rotation.x = -s * swing;
     if (this.grabbing) {
-      for (const a of m.arms) a.rotation.x = THREE.MathUtils.lerp(a.rotation.x, -1.5, Math.min(1, dt * 8));
-      m.arms[0].rotation.z = 0.25;
-      m.arms[1].rotation.z = -0.25;
+      // Reach out, then lift and shake you.
+      const t = this.catchT;
+      const lift = THREE.MathUtils.smoothstep(t, 0.3, 0.8);
+      const shake = t > 0.35 && t < 1.4 ? Math.sin(t * 38) * 0.12 : 0;
+      for (const a of m.arms) a.rotation.x = -1.35 - lift * 0.45 + shake;
+      m.arms[0].rotation.z = 0.3;
+      m.arms[1].rotation.z = -0.3;
+      m.torso.rotation.x = 0.15 - lift * 0.2;
+      m.head.rotation.x = -0.15 + shake * 0.5;
+      m.legs[0].rotation.x = m.legs[1].rotation.x = 0;
+      return;
     } else if (this.state === 'stunned') {
       m.arms[0].rotation.x = -0.4 + Math.sin(performance.now() * 0.02) * 0.2;
       m.arms[1].rotation.x = -0.4 - Math.sin(performance.now() * 0.02) * 0.2;
@@ -513,6 +680,7 @@ export class Neighbor {
     m.torso.rotation.x = run ? 0.18 : 0.02;
     m.body.position.y = Math.abs(Math.cos(this.phase)) * (run ? 0.07 : 0.03);
     m.head.rotation.z = this.state === 'stunned' ? Math.sin(performance.now() * 0.01) * 0.3 : 0;
+    if (task) task.chore.pose(m, task.t);
 
     // Footsteps, twice per cycle.
     if (sp > 0.3 && Math.floor(prev / Math.PI) !== Math.floor(this.phase / Math.PI)) {

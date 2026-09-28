@@ -30,6 +30,9 @@ export class Player {
     this.bob = 0;
     this.held = null;
     this.hidden = null; // hide spot (wardrobe) while hiding
+    // Extra camera motion for cutscenes (getting grabbed, climbing into wardrobes).
+    this.camOffset = new THREE.Vector3();
+    this.roll = 0;
     this.moving = false;
   }
 
@@ -54,6 +57,8 @@ export class Player {
     this.crouching = false;
     this.ch.height = STAND_H;
     this.eyeH = STAND_EYE;
+    this.camOffset.set(0, 0, 0);
+    this.roll = 0;
     this.syncCamera(0);
   }
 
@@ -133,7 +138,7 @@ export class Player {
     else this.camY += (target - this.camY) * Math.min(1, dt * 18);
     const bobAmt = this.moving && this.ch.onGround ? (this.sprinting ? 0.05 : 0.03) : 0;
     const by = Math.sin(this.bob * 2) * bobAmt;
-    this.camera.position.set(this.ch.pos.x, this.camY + by, this.ch.pos.z);
-    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    this.camera.position.set(this.ch.pos.x, this.camY + by, this.ch.pos.z).add(this.camOffset);
+    this.camera.rotation.set(this.pitch, this.yaw, this.roll, 'YXZ');
   }
 }
