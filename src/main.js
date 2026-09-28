@@ -889,7 +889,8 @@ class Game {
 
     // Pulled out of the wardrobe towards him.
     if (this.pulledFrom) {
-      const k = THREE.MathUtils.smoothstep(t, 0, 0.4);
+      // Dragged as far as the wardrobe doorway (he's standing right outside).
+      const k = THREE.MathUtils.smoothstep(t, 0, 0.4) * 0.4;
       p.ch.pos.lerpVectors(this.pullFrom, this.pulledFrom.out, k);
     }
 
@@ -909,7 +910,7 @@ class Game {
     const lift = THREE.MathUtils.smoothstep(t, 0.3, 0.75) * (1 - THREE.MathUtils.smoothstep(t, 1.3, 1.6));
     const shakeAmt = t < 0.3 ? 0.02 : t < 1.3 ? 0.06 : 0.02;
     const r = (k) => Math.sin(this.shakeSeed + t * (37 + k * 11)) * shakeAmt;
-    p.camOffset.set((dx / dist) * 0.3 * lift + r(1), 0.4 * lift + r(2), (dz / dist) * 0.3 * lift + r(3));
+    p.camOffset.set((dx / dist) * 0.12 * lift + r(1), 0.4 * lift + r(2), (dz / dist) * 0.12 * lift + r(3));
     p.roll = t < 1.3 ? Math.sin(t * 25) * 0.06 * lift : THREE.MathUtils.lerp(0, 0.7, THREE.MathUtils.smoothstep(t, 1.3, 1.7));
     if (t > 1.3) p.pitch -= dt * 1.2;
     p.ch.vel.set(0, 0, 0);

@@ -459,8 +459,12 @@ export class Neighbor {
       const dx = player.pos.x - this.ch.pos.x;
       const dz = player.pos.z - this.ch.pos.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.8 && game.caughtT < 0.35) this.moveToward(player.pos, 4, dt);
-      else this.stop(dt);
+      // Keep about arm's length: close the gap, or step back if he's on top of you.
+      if (d > 0.95 && game.caughtT < 0.35) this.moveToward(player.pos, 4, dt);
+      else if (d < 0.85 && d > 0.01) {
+        this.ch.vel.x = (-dx / d) * 1.5;
+        this.ch.vel.z = (-dz / d) * 1.5;
+      } else this.stop(dt);
       this.physics.moveCharacter(this.ch, dt);
       this.turnTo(Math.atan2(dx, dz), dt, 14);
       this.grabbing = true;
