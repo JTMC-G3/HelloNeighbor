@@ -1,0 +1,104 @@
+# Hello Neighbor – Alpha 1 (Fan Recreation)
+
+A browser-playable, fan-made recreation of the original **Hello Neighbor Alpha 1**
+experience, built from scratch with [Three.js](https://threejs.org/) and [Vite](https://vite.dev/).
+
+You live across the street from a man who clearly has something to hide. Sneak into his
+house, dodge him as he patrols, find the keys, and get into the padlocked basement,
+without getting caught.
+
+> **Disclaimer:** this is an unofficial, non-commercial fan tribute. It is not affiliated
+> with or endorsed by tinyBuild or Dynamic Pixels. It contains no assets from the original
+> game. Every model, texture, and sound is generated procedurally in the browser.
+
+---
+
+## ▶️ Play it
+
+### Option 1: GitHub Codespaces (no install)
+
+1. On GitHub, click **Code → Codespaces → Create codespace on this branch**.
+2. Wait for the container to build. It runs `npm install` and then starts the game
+   server automatically (`npm run dev` on port **5173**).
+3. A browser tab opens on the forwarded port. If it doesn't, open the **Ports** panel
+   and click the 🌐 globe icon next to port `5173`.
+
+> 💡 Use **"Open in Browser"** rather than VS Code's built-in *Simple Browser* preview.
+> Embedded previews usually block mouse capture (pointer lock). The game still works
+> there, but you'll have to drag to look around.
+
+To start the server manually in any terminal: `npm run dev`.
+
+### Option 2: Run locally
+
+Requires [Node.js](https://nodejs.org/) 18 or newer.
+
+```bash
+npm install
+npm run dev
+```
+
+Then open <http://localhost:5173>.
+
+### Option 3: GitHub Pages
+
+The repo includes a workflow (`.github/workflows/pages.yml`) that builds the game and
+publishes it to GitHub Pages on every push to `main`. Turn it on once under
+**Settings → Pages → Build and deployment → Source: GitHub Actions**. The game will
+then be live at `https://<user>.github.io/<repo>/`.
+
+To build a static copy yourself, run `npm run build`. The output goes to `dist/` and can be
+hosted on any static web server. It has to be served over HTTP, not opened as a `file://`.
+
+---
+
+## 🎮 Controls
+
+| Key | Action |
+| --- | --- |
+| **W A S D** | Move |
+| **Mouse** (or arrow keys) | Look |
+| **Shift** | Sprint (fast, but loud) |
+| **C** / **Ctrl** | Crouch (silent, harder to spot) |
+| **Space** | Jump (onto counters, through windows) |
+| **E** | Pick up / swap item, open doors, use keys |
+| **Left click** | Throw held item |
+| **Q** / **Right click** | Drop held item |
+| **F** | Flashlight |
+| **Esc** / **P** | Pause (sensitivity, volume, restart) |
+
+Click the game to capture the mouse.
+
+## 🏠 How to play
+
+* **Goal:** get into the neighbor's basement.
+* The **front door** is locked. Find another way in: the back door, or smash a window by
+  throwing something at it. Breaking glass is loud, and he *will* come to check.
+* He patrols the house and yard. The **eye** at the top of the screen shows how suspicious
+  he is. When it turns red he's chasing you, so break line of sight or get off his property.
+* Footsteps make noise. Sprinting is loud, walking is quieter, and crouching is silent.
+* Throw an object at him to stun him for a couple of seconds.
+* If he catches you, you wake up back in front of your own house. Broken windows and opened
+  padlocks stay that way, but a key you were holding goes back to where you found it.
+* The basement door has a **red padlock**, and the upstairs bedroom has a **blue** one. Keys
+  are hidden somewhere in the house…
+
+---
+
+## 🧩 Project structure
+
+```
+index.html            UI overlays (menu, HUD, pause, ending)
+src/main.js           Game loop, input, interaction, items, catch/ending sequences
+src/world.js          Level builder: house, rooms, furniture, doors, windows, yard, street
+src/neighbor.js       Neighbor model, vision/hearing, patrol/investigate/chase AI
+src/nav.js            Waypoint graph + pathfinding for the neighbor
+src/player.js         First-person controller (walk, sprint, crouch, jump)
+src/physics.js        Lightweight AABB collision for characters and sphere items
+src/audio.js          Web Audio synthesized sound effects and chase music
+src/textures.js       Procedural canvas textures
+src/items.js          Throwable props and keys
+.devcontainer/        GitHub Codespaces configuration
+```
+
+Open the browser console and use `window.game` to poke at the running game while debugging.
