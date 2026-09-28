@@ -100,6 +100,32 @@ a fresh one.
 
 ---
 
+## 🐞 Debug mode
+
+Tick **Debug mode** on the title screen before pressing Play (it's remembered). You get:
+
+* **Chams / ESP** on the neighbor: he's highlighted through walls, with a box, distance and
+  label, coloured by his mode (green idle, yellow suspicious, red attacking, purple stunned).
+  When he's off-screen, an arrow at the edge of the screen points to him.
+* His **vision cone**, the **route** he's walking, a **line of sight** to you (green when he
+  can see you), and **noise rings** showing how far each sound carried (red = he heard it).
+* A **debug panel** (top left) with his mode and raw AI state, the chore he's doing and how
+  far through it he is, awareness, whether he sees you, when he last saw or heard you, where
+  he is, whether he knows your hiding spot, plus your position, room and noise level, the
+  locks left in the house, and FPS / draw calls.
+
+| Key | Debug action |
+| --- | --- |
+| **V** | See through the neighbor's eyes |
+| **B** | Free camera: fly with WASD, Space/C up/down, Shift for speed. Passes through walls, and he ignores you completely |
+| **T** | (in free camera) Teleport your body to the camera |
+| **N** | Show the waypoint graph and chore spots |
+| **L** | Show where the keys and crowbar are |
+| **K** | Freeze / unfreeze the neighbor |
+| **H** | Hide / show the debug panel |
+
+---
+
 ## ⚙️ Performance / Chromebooks
 
 The game is tuned to run on school Chromebooks. Pick a preset under **Graphics** on the
@@ -134,6 +160,7 @@ src/builder.js        Merged static geometry, materials
 src/rng.js            Seeded random numbers (so a house can be replayed)
 src/neighbor.js       Neighbor model, vision/hearing, patrol/investigate/chase AI
 src/chores.js         The neighbor's everyday chores (poses, props, sounds)
+src/debug.js          Debug mode: chams/ESP, info panel, neighbor's-eye view, free camera
 src/nav.js            Waypoint graph + pathfinding for the neighbor
 src/player.js         First-person controller (walk, sprint, crouch, jump)
 src/physics.js        AABB collision (grid broadphase) for characters and sphere items

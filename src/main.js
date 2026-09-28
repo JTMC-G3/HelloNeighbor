@@ -8,6 +8,7 @@ import { Neighbor } from './neighbor.js';
 import { Sound } from './audio.js';
 import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality, adapt } from './quality.js';
 import { randomSeed } from './rng.js';
+import { Debug } from './debug.js';
 
 const REACH = 2.5;
 // Things that block reaching for an item: walls, glass, closed cupboards (not doors, handled separately).
@@ -226,6 +227,9 @@ class Game {
       });
     }
     $('fps').classList.toggle('hidden', !this.showFps);
+    const dbg = $('debugChk');
+    dbg.checked = loadSetting('debug', '0') === '1';
+    dbg.addEventListener('change', () => saveSetting('debug', dbg.checked ? '1' : '0'));
   }
 
   /**
@@ -279,6 +283,10 @@ class Game {
       if (this.state !== 'playing') return;
       p.keys.add(e.code);
       if (e.repeat) return;
+      if (this.debug && this.debug.onKey(e.code)) {
+        e.preventDefault();
+        return;
+      }
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyQ' || e.code === 'KeyG') this.drop();
       if (e.code === 'KeyF') this.toggleFlashlight();
@@ -288,15 +296,20 @@ class Game {
     document.addEventListener('keyup', (e) => p.keys.delete(e.code));
     window.addEventListener('blur', () => p.keys.clear());
 
+    // Mouse look goes to the debug cameras when they're active.
+    const look = (dx, dy) => {
+      if (this.debug && this.debug.look(dx, dy)) return;
+      p.look(dx, dy);
+    };
     document.addEventListener('mousemove', (e) => {
       if (this.state !== 'playing') return;
       if (document.pointerLockElement === this.canvas) {
         // Browsers sometimes report a huge bogus delta right after locking.
         if (performance.now() - this.lockedAt < 120) return;
         if (Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400) return;
-        p.look(e.movementX, e.movementY);
+        look(e.movementX, e.movementY);
       } else if (this.drag) {
-        p.look(e.clientX - this.drag.x, e.clientY - this.drag.y);
+        look(e.clientX - this.drag.x, e.clientY - this.drag.y);
         this.drag.moved += Math.abs(e.clientX - this.drag.x) + Math.abs(e.clientY - this.drag.y);
         this.drag.x = e.clientX;
         this.drag.y = e.clientY;
@@ -361,6 +374,7 @@ class Game {
 
   start() {
     this.sound.init();
+    if ($('debugChk').checked) this.debug = new Debug(this);
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     this.state = 'playing';
@@ -508,7 +522,7 @@ class Game {
 
   interact() {
     const p = this.player;
-    if (this.hideAnim) return;
+    if (this.hideAnim || this.altView()) return;
     if (p.hidden) {
       this.leaveHiding();
       return;
@@ -718,15 +732,20 @@ class Game {
     $('held').innerHTML = '';
   }
 
+  /** True while a debug camera (neighbor's view / free cam) has the camera. */
+  altView() {
+    return !!(this.debug && this.debug.view !== 'player');
+  }
+
   drop() {
     const it = this.player.held;
-    if (!it) return;
+    if (!it || this.altView()) return;
     this.release(it, true);
   }
 
   throwHeld() {
     const it = this.player.held;
-    if (!it || this.player.hidden || this.hideAnim) return;
+    if (!it || this.player.hidden || this.hideAnim || this.altView()) return;
     this.release(it, false);
     const dir = this.camera.getWorldDirection(new THREE.Vector3());
     const power = it.radius > 0.2 ? 10 : 14;
@@ -841,6 +860,7 @@ class Game {
 
   caught() {
     if (this.state !== 'playing') return;
+    if (this.debug) this.debug.setView('player');
     this.state = 'caught';
     this.caughtT = 0;
     this.catches++;
@@ -1004,7 +1024,9 @@ class Game {
       this.neighbor.update(dt, p, this);
     } else if (this.state === 'playing') {
       this.playTime += dt;
-      if (this.hideAnim) {
+      if (this.altView()) {
+        // Your body stays put while a debug camera is active.
+      } else if (this.hideAnim) {
         this.updateHideAnim(dt);
       } else if (p.hidden) {
         // Peeking out of a wardrobe: look around a little, no moving.
@@ -1024,12 +1046,14 @@ class Game {
         if (it.container) it.mesh.visible = it.container.t > 0.25;
       }
       for (const nz of this.noises) {
-        if (nz.pos.distanceTo(this.neighbor.pos) < nz.radius) this.neighbor.hear(nz.pos, this, nz.radius);
+        const heard = nz.pos.distanceTo(this.neighbor.pos) < nz.radius;
+        if (heard) this.neighbor.hear(nz.pos, this, nz.radius);
+        if (this.debug) this.debug.noise(nz.pos, nz.radius, heard);
       }
       this.noises.length = 0;
       this.neighbor.update(dt, p, this);
       if (this.neighbor.state !== 'chase') this.sound.setChase(false);
-      this.target = this.findTarget();
+      this.target = this.altView() ? null : this.findTarget();
       this.updatePrompt();
       this.updateHUD();
       this.checkEnding();
@@ -1047,8 +1071,10 @@ class Game {
       this.updateEnding(dt);
     }
 
-    if (this.state !== 'menu') this.sound.setListener(this.camera.position, p.yaw);
-    else this.sound.setListener(this.camera.position, 0);
+    if (this.debug && this.state !== 'menu') this.debug.update(dt);
+    // Hear from wherever the camera is (your head, his head, or the free camera).
+    this.camera.getWorldDirection(this.tmpDir || (this.tmpDir = new THREE.Vector3()));
+    this.sound.setListener(this.camera.position, Math.atan2(-this.tmpDir.x, -this.tmpDir.z));
     if (this.state === 'playing') this.sound.ambience(dt, p.pos.y < 0.2 && p.pos.y > -0.5);
     this.updateShards(dt);
     this.sky.position.copy(this.camera.position);

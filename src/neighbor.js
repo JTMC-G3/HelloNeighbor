@@ -403,6 +403,7 @@ export class Neighbor {
     const t = this.task && this.task.phase === 'do' ? this.task.chore : null;
     const factor = t ? (t.asleep ? 0.35 : t.deaf || 1) : 1;
     if (pos.distanceTo(this.ch.pos) > radius * factor) return;
+    this.lastHeard = { pos: pos.clone(), radius, t: game.time };
     this.awareness = Math.max(this.awareness, 0.4);
     this.investigate(pos, 3.5);
   }
@@ -474,10 +475,13 @@ export class Neighbor {
       return;
     }
     this.grabbing = false;
-    if (game.state !== 'playing') {
+    const dbg = game.debug;
+    if (game.state !== 'playing' || (dbg && dbg.frozen)) {
       this.animate(dt);
       return;
     }
+    // Debug free camera: he doesn't notice you at all.
+    const ghost = !!(dbg && dbg.view === 'free');
 
     const toP = Math.hypot(player.pos.x - this.ch.pos.x, player.pos.z - this.ch.pos.z);
     const dy = Math.abs(player.pos.y - this.ch.pos.y);
@@ -485,8 +489,9 @@ export class Neighbor {
 
     // ---- perception
     const asleep = this.task && this.task.phase === 'do' && this.task.chore.asleep;
-    this.sees = this.state !== 'stunned' && !asleep && this.canSee(player);
+    this.sees = this.state !== 'stunned' && !asleep && !ghost && this.canSee(player);
     if (this.sees) {
+      this.lastSeenAt = game.time;
       this.lastSeen.copy(player.pos);
       if (onProp) {
         // Takes ~0.5s to react up close indoors, a couple of seconds far away in the yard.
@@ -505,7 +510,7 @@ export class Neighbor {
 
     // Bumping into him is a bad idea.
     const findable = !player.hidden || this.sawHide;
-    if (toP < 0.95 && dy < 1.3 && this.state !== 'stunned' && onProp && findable && !player.hidden) this.startChase(game);
+    if (toP < 0.95 && dy < 1.3 && this.state !== 'stunned' && onProp && findable && !player.hidden && !ghost) this.startChase(game);
 
     let trying = false;
     switch (this.state) {
@@ -625,7 +630,7 @@ export class Neighbor {
     if (this.ch.pos.y < -10) this.reset();
 
     // Catch.
-    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && !player.hidden) game.caught();
+    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && !player.hidden && !ghost) game.caught();
 
     this.animate(dt);
   }

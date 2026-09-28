@@ -24,6 +24,9 @@
       </div>
 
       <div id="fps" class="hidden"></div>
+      <canvas id="espCanvas" class="hidden"></canvas>
+      <div id="debugPanel" class="hidden"></div>
+      <div id="debugBanner" class="hidden"></div>
       <div id="hideOverlay" class="hidden"><div class="hideText"><kbd>E</kbd> Leave hiding spot</div></div>
       <div id="fade"></div>
       <div id="caughtText" class="hidden">GOT YOU!</div>
@@ -48,6 +51,7 @@
               </select>
             </label>
             <label class="check"><input type="checkbox" class="fpsChk" /> Show FPS</label>
+            <label class="check" title="Chams/ESP on the neighbor, info panel, neighbor's-eye view and a free camera"><input type="checkbox" id="debugChk" /> Debug mode</label>
           </div>
           <div class="controls">
             <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</div>
