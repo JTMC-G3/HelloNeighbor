@@ -76,14 +76,15 @@ hosted on any static web server. It has to be served over HTTP, not opened as a 
 | --- | --- |
 | **W A S D** | Move |
 | **Mouse** (or arrow keys) | Look |
-| **Shift** | Sprint (fast, but loud) |
-| **C** / **Ctrl** | Crouch (silent, harder to spot) |
+| **Shift** | Sprint (fast, but makes a little noise) |
+| **C** / **Ctrl** | Crouch (harder to spot) |
 | **Space** | Jump (onto counters, through windows) |
 | **E** | Pick up / swap items, open doors and cupboards, use keys, hide, switch things on/off |
 | **Left click** | Throw held item |
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
 | **Esc** / **P** | Pause (sensitivity, volume, restart) |
+| **`** | Debug mode on / off (see below) |
 
 Click the game to capture the mouse.
 
@@ -95,7 +96,7 @@ There are no objectives or hints. Exploring and figuring things out is the game.
   but he'll hear the glass.
 * He patrols the house and yard. The **eye** at the top of the screen shows how suspicious
   he is. When it turns red he's chasing you, so break line of sight or get off his property.
-* Footsteps make noise. Sprinting is loud, walking is quieter, and crouching is silent.
+* Walking and crouching are silent. Running makes a little noise if he's close by.
 * Cupboards, fridges and chests open, and things are often tucked away inside.
 * You can hide in wardrobes. If he watched you climb in, he'll yank the doors open and drag
   you out.
@@ -153,7 +154,8 @@ What's different in VR:
 
 ## 🐞 Debug mode
 
-Tick **Debug mode** on the title screen before pressing Play (it's remembered). You get:
+Tick **Debug mode** on the title screen before pressing Play (it's remembered), or press
+**`** (the backtick key, left of 1) at any point mid-game to switch it on or off. You get:
 
 * **Chams / ESP** on the neighbor: he's highlighted through walls, with a box, distance and
   label, coloured by his mode (green idle, yellow suspicious, red attacking, purple stunned).
@@ -167,6 +169,7 @@ Tick **Debug mode** on the title screen before pressing Play (it's remembered). 
 
 | Key | Debug action |
 | --- | --- |
+| **`** | Turn debug mode on / off mid-game |
 | **V** | See through the neighbor's eyes |
 | **B** | Free camera: fly with WASD, Space/C up/down, Shift for speed. Passes through walls, and he ignores you completely |
 | **T** | (in free camera) Teleport your body to the camera |

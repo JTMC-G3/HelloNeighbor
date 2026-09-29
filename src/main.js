@@ -288,6 +288,11 @@ class Game {
       if (this.state !== 'playing') return;
       p.keys.add(e.code);
       if (e.repeat) return;
+      if (e.code === 'Backquote') {
+        e.preventDefault();
+        this.toggleDebug();
+        return;
+      }
       if (this.debug && this.debug.onKey(e.code)) {
         e.preventDefault();
         return;
@@ -377,6 +382,18 @@ class Game {
     $('vol').addEventListener('input', (e) => this.sound.setVolume(Number(e.target.value)));
   }
 
+  /**
+   * Debug mode on/off (the ` key, or the title-screen checkbox). The tools are
+   * built once and kept; `this.debug` is only set while they're switched on.
+   */
+  toggleDebug(on = !this.debug) {
+    if (on && !this.debugTools) this.debugTools = new Debug(this);
+    if (!this.debugTools) return;
+    this.debugTools.setEnabled(on);
+    this.debug = on ? this.debugTools : null;
+    if (this.state === 'playing') this.toast(on ? 'Debug mode ON  (` to turn off)' : 'Debug mode OFF', 1500);
+  }
+
   lockPointer() {
     try {
       const r = this.canvas.requestPointerLock();
@@ -388,7 +405,7 @@ class Game {
 
   start(inVR = false) {
     this.sound.init();
-    if ($('debugChk').checked) this.debug = new Debug(this);
+    if ($('debugChk').checked) this.toggleDebug(true);
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     this.state = 'playing';

@@ -131,8 +131,8 @@ export class Player {
         this.stepAcc = 0;
         const indoors = this.ch.pos.y > 0.2 || this.ch.pos.y < -0.5;
         if (!this.crouching) this.sound.footstep(indoors, this.sprinting);
-        const r = this.crouching ? 0 : this.sprinting ? 11 : 4.5;
-        if (r > 0) emitNoise(this.ch.pos, r);
+        // Only running carries far enough for him to hear, and only just.
+        if (this.sprinting) emitNoise(this.ch.pos, 4.5);
       }
     }
 
