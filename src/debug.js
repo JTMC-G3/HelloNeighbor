@@ -10,6 +10,10 @@ import { CHORES } from './chores.js';
  *   - V: see through his eyes, B: free noclip camera (he ignores you),
  *     N: waypoint graph + chore spots, L: key/crowbar markers,
  *     K: freeze his AI, H: hide the panel, T (free cam): teleport there
+ *
+ * In VR (see vr.js for the controller bindings) the panel is drawn on your
+ * left wrist, the ESP labels float in the world, and the two debug cameras
+ * move your play space instead of the camera.
  */
 
 export const MODE_COLORS = {
@@ -24,6 +28,16 @@ const VIEW_RANGE = 22;
 const FOV = THREE.MathUtils.degToRad(62);
 const $ = (id) => document.getElementById(id);
 const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+
+const MONO = 'ui-monospace, Menlo, Consolas, monospace';
+const DESKTOP_KEYS = ["` debug off · V neighbor's view · B free cam · N waypoints · L keys · K freeze · H hide panel"];
+const VR_KEYS = [
+  'Click BOTH sticks: debug off',
+  'Hold LEFT stick in, then (right hand):',
+  "  A his view · B free cam · Trigger teleport",
+  '  Grip freeze · Stick up waypoints · down keys',
+  '  Stick left/right hide this panel',
+];
 
 const overlayMat = (color, opacity = 1) => new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false });
 
@@ -128,6 +142,9 @@ export class Debug {
     this.canvas.classList.remove('hidden');
     this.resize();
     window.addEventListener('resize', () => this.resize());
+
+    // --- VR: floating name tags (the ESP canvas can't be seen in a headset).
+    this.tags = new Map(); // item / station / 'neighbor' -> sprite
   }
 
   buildGraph() {
@@ -178,6 +195,7 @@ export class Debug {
     }
     this.group.visible = on;
     for (const c of this.chams) c.visible = on;
+    if (this.wrist) this.wrist.visible = false;
     this.panel.classList.toggle('hidden', !on || !this.panelOn);
     this.canvas.classList.toggle('hidden', !on);
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -237,10 +255,15 @@ export class Debug {
     const p = g.player;
     if (view === this.view) return;
     if (view === 'free') {
-      this.free.pos.copy(g.camera.position);
+      g.camera.getWorldPosition(this.free.pos);
       g.camera.getWorldDirection(this.v);
       this.free.yaw = Math.atan2(-this.v.x, -this.v.z);
       this.free.pitch = Math.asin(THREE.MathUtils.clamp(this.v.y, -1, 1));
+      if (this.inVR()) {
+        // In a headset your head does the looking; the yaw is the play space's.
+        this.free.yaw = g.vr.rig.rotation.y;
+        this.free.pitch = 0;
+      }
     }
     this.view = view;
     p.keys.clear();
@@ -249,11 +272,29 @@ export class Debug {
     document.body.classList.toggle('debugView', alt);
     for (const c of this.chams) c.visible = view !== 'pov';
     this.banner.classList.toggle('hidden', !alt);
-    this.banner.textContent = view === 'pov'
-      ? "NEIGHBOR'S VIEW  ·  V to return"
-      : 'FREE CAMERA  ·  noclip, he ignores you  ·  WASD/Space/C to fly, Shift fast  ·  T teleport here  ·  B to return';
+    this.banner.textContent = this.bannerText();
     if (view !== 'pov' && g.state === 'playing') $('fade').style.opacity = '0';
     if (!alt) p.syncCamera(0);
+  }
+
+  inVR() {
+    return !!(this.game.vr && this.game.vr.active);
+  }
+
+  /** What the banner says while a debug camera is on (also shown in the VR HUD). */
+  bannerText() {
+    const vr = this.inVR();
+    if (this.view === 'pov') {
+      const n = this.game.neighbor;
+      const asleep = n.task && n.task.phase === 'do' && n.task.chore.asleep;
+      return `NEIGHBOR'S VIEW  ·  ${asleep ? '(asleep, eyes closed)  ·  ' : ''}${vr ? 'hold left stick + A to return' : 'V to return'}`;
+    }
+    if (this.view === 'free') {
+      return vr
+        ? 'FREE CAMERA  ·  left stick fly, A/B up/down, click left stick for speed  ·  hold left stick + Trigger: teleport here, + B: return'
+        : 'FREE CAMERA  ·  noclip, he ignores you  ·  WASD/Space/C to fly, Shift fast  ·  T teleport here  ·  B to return';
+    }
+    return '';
   }
 
   /** Mouse look while the camera isn't yours; returns true if handled. */
@@ -370,18 +411,36 @@ export class Debug {
     this.playerMarker.position.copy(p.pos);
 
     this.updateCamera(dt);
-    this.drawEsp(mode, color);
+    const vr = this.inVR();
+    if (vr) {
+      if (!this.espCleared) this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.espCleared = true;
+    } else {
+      this.espCleared = false;
+      this.drawEsp(mode, color);
+    }
 
     this.panelTimer -= dt;
-    if (this.panelTimer <= 0 && this.panelOn) {
-      this.panelTimer = 0.2;
-      this.updatePanel(mode, color);
-    }
+    const refresh = this.panelTimer <= 0;
+    if (refresh) this.panelTimer = 0.2;
+    if (refresh && this.panelOn) this.updatePanel(mode, color);
+    this.updateTags(vr, mode, color, refresh);
+    this.updateWrist(vr);
   }
 
   updateCamera(dt) {
     const g = this.game;
     const cam = g.camera;
+    if (this.view !== 'player' && this.inVR()) {
+      // The headset owns the camera: move the play space instead (vr.js).
+      g.vr.debugCamera(this, dt);
+      if (this.view === 'pov') {
+        const n = g.neighbor;
+        const asleep = n.task && n.task.phase === 'do' && n.task.chore.asleep;
+        $('fade').style.opacity = asleep ? '0.85' : '0';
+      }
+      return;
+    }
     if (this.view === 'pov') {
       // Look out of his eyes: follows his head, so it works sitting and lying down too.
       const head = g.neighbor.model.head;
@@ -390,7 +449,7 @@ export class Debug {
       head.getWorldQuaternion(this.q);
       cam.quaternion.copy(this.q).multiply(FLIP);
       const asleep = g.neighbor.task && g.neighbor.task.phase === 'do' && g.neighbor.task.chore.asleep;
-      this.banner.textContent = asleep ? "NEIGHBOR'S VIEW  ·  (asleep, eyes closed)  ·  V to return" : "NEIGHBOR'S VIEW  ·  V to return";
+      this.banner.textContent = this.bannerText();
       $('fade').style.opacity = asleep ? '0.85' : '0';
     } else if (this.view === 'free') {
       const f = this.free;
@@ -482,7 +541,8 @@ export class Debug {
     }
   }
 
-  updatePanel(mode, color) {
+  /** The info panel as rows, shared by the HTML panel and the VR wrist panel. */
+  panelRows(mode, color) {
     const g = this.game;
     const n = g.neighbor;
     const p = g.player;
@@ -501,35 +561,214 @@ export class Debug {
     const locks = g.world.doors.filter((d) => d.locks.length);
     const lockText = locks.map((d) => d.locks.map((l) => (l.type === 'key' ? l.color : 'boards')).join('+')).join(', ') || 'none';
     const info = g.renderer.info.render;
+    const aw = mode === 'ATTACK' ? 1 : n.awareness;
     const bar = (v) => '█'.repeat(Math.round(v * 10)).padEnd(10, '░');
-    const row = (k, v) => `<div><span class="dbg-k">${k}</span>${v}</div>`;
-    this.panel.innerHTML = [
-      `<div class="dbg-title">DEBUG · House #${g.seed}</div>`,
-      `<div class="dbg-sec">NEIGHBOR</div>`,
-      row('Mode', `<b style="color:${color}">${mode}</b>`),
+    const row = (k, v, c) => ({ t: 'row', k, v, c });
+    const sec = (text) => ({ t: 'sec', text });
+    return [
+      { t: 'title', text: `DEBUG · House #${g.seed}` },
+      sec('NEIGHBOR'),
+      row('Mode', mode, color),
       row('State', `${n.state}${this.frozen ? ' (frozen)' : ''}`),
       row('Chore', chore),
-      row('Awareness', `${bar(mode === 'ATTACK' ? 1 : n.awareness)} ${Math.round((mode === 'ATTACK' ? 1 : n.awareness) * 100)}%`),
-      row('Sees you', n.sees ? '<b style="color:#4cd964">YES</b>' : 'no'),
+      row('Awareness', `${bar(aw)} ${Math.round(aw * 100)}%`),
+      row('Sees you', n.sees ? 'YES' : 'no', n.sees ? '#4cd964' : null),
       row('Last saw you', ago(n.lastSeenAt)),
       row('Last heard', heard),
       row('Route', goal),
       row('Distance', `${n.pos.distanceTo(p.pos).toFixed(1)} m`),
       row('Where', this.roomAt(n.pos)),
-      row('Knows hiding spot', p.hidden ? (n.sawHide ? '<b style="color:#ff3b30">YES</b>' : 'no') : '—'),
-      `<div class="dbg-sec">YOU</div>`,
+      row('Knows hiding spot', p.hidden ? (n.sawHide ? 'YES' : 'no') : '—', p.hidden && n.sawHide ? '#ff3b30' : null),
+      sec('YOU'),
       row('Position', r3(p.pos)),
       row('Where', this.roomAt(p.pos)),
       row('Noise', noiseLvl),
       row('On his property', g.onProperty(p.pos) ? 'yes' : 'no'),
       row('Holding', p.held ? p.held.name : '—'),
-      `<div class="dbg-sec">HOUSE</div>`,
+      sec('HOUSE'),
       row('Locks left', `${locks.length} (${lockText})`),
       row('Chores here', [...new Set(n.stations.map((s) => s.type))].join(', ')),
-      `<div class="dbg-sec">RENDER</div>`,
+      sec('RENDER'),
       row('FPS', `${this.fps.value} · ${g.preset.label} · ${Math.round(g.scale * 100)}% res`),
       row('Draw calls', `${info.calls} · ${(info.triangles / 1000).toFixed(0)}k tris`),
-      `<div class="dbg-keys">\` debug off · V neighbor's view · B free cam · N waypoints · L keys · K freeze · H hide panel</div>`,
-    ].join('');
+      { t: 'keys', lines: this.inVR() ? VR_KEYS : DESKTOP_KEYS },
+    ];
+  }
+
+  updatePanel(mode, color) {
+    const rows = this.panelRows(mode, color);
+    if (this.inVR()) {
+      this.drawWrist(rows);
+      return;
+    }
+    this.panel.innerHTML = rows
+      .map((r) => {
+        if (r.t === 'title') return `<div class="dbg-title">${r.text}</div>`;
+        if (r.t === 'sec') return `<div class="dbg-sec">${r.text}</div>`;
+        if (r.t === 'keys') return `<div class="dbg-keys">${r.lines.join(' · ')}</div>`;
+        return `<div><span class="dbg-k">${r.k}</span>${r.c ? `<b style="color:${r.c}">${r.v}</b>` : r.v}</div>`;
+      })
+      .join('');
+  }
+
+  // ============================================================== VR bits
+  /** The info panel on your left wrist: look at your hand to read it. */
+  updateWrist(vr) {
+    const g = this.game;
+    if (!vr) {
+      if (this.wrist) this.wrist.visible = false;
+      return;
+    }
+    if (!this.wrist) {
+      this.wristCanvas = document.createElement('canvas');
+      this.wristCanvas.width = 512;
+      this.wristCanvas.height = 760;
+      this.wristTex = new THREE.CanvasTexture(this.wristCanvas);
+      this.wristTex.colorSpace = THREE.SRGBColorSpace;
+      this.wrist = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.2, 0.2 * (760 / 512)),
+        new THREE.MeshBasicMaterial({ map: this.wristTex, transparent: true, depthTest: false, depthWrite: false }),
+      );
+      this.wrist.renderOrder = 1002;
+      // Stands up above the back of your hand, leaning back towards your eyes.
+      this.wrist.position.set(0, 0.2, 0.03);
+      this.wrist.rotation.x = -0.35;
+      this.panelTimer = 0;
+    }
+    const grip = g.vr.hand('left').grip;
+    if (this.wrist.parent !== grip) grip.add(this.wrist);
+    this.wrist.visible = this.panelOn;
+  }
+
+  drawWrist(rows) {
+    if (!this.wristCanvas) return;
+    const ctx = this.wristCanvas.getContext('2d');
+    const W = this.wristCanvas.width;
+    const H = this.wristCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(10,12,16,0.85)';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, W, H, 18);
+    ctx.fill();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    const fit = (text, x, max) => {
+      let s = String(text);
+      while (s.length > 1 && ctx.measureText(s).width > max) s = s.slice(0, -1);
+      ctx.fillText(s === String(text) ? s : `${s.slice(0, -1)}…`, x, y);
+    };
+    let y = 30;
+    for (const r of rows) {
+      if (r.t === 'title') {
+        ctx.font = `bold 26px ${MONO}`;
+        ctx.fillStyle = '#ffd166';
+        fit(r.text, 16, W - 32);
+        y += 36;
+      } else if (r.t === 'sec') {
+        y += 6;
+        ctx.font = `bold 18px ${MONO}`;
+        ctx.fillStyle = '#7fb2ff';
+        fit(r.text, 16, W - 32);
+        y += 26;
+      } else if (r.t === 'row') {
+        ctx.font = `18px ${MONO}`;
+        ctx.fillStyle = '#9aa3ad';
+        fit(r.k, 16, 180);
+        ctx.fillStyle = r.c || '#e8e8e8';
+        if (r.c) ctx.font = `bold 18px ${MONO}`;
+        fit(r.v, 200, W - 216);
+        y += 24;
+      } else if (r.t === 'keys') {
+        y += 10;
+        ctx.font = `15px ${MONO}`;
+        ctx.fillStyle = '#c9ced6';
+        for (const line of r.lines) {
+          fit(line, 16, W - 32);
+          y += 21;
+        }
+      }
+    }
+    this.wristTex.needsUpdate = true;
+  }
+
+  /** A text label that always faces you and stays readable at any distance. */
+  tag(key) {
+    let s = this.tags.get(key);
+    if (!s) {
+      const c = document.createElement('canvas');
+      c.width = 512;
+      c.height = 96;
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+      s.renderOrder = 1000;
+      s.userData = { c, tex, text: '' };
+      this.group.add(s);
+      this.tags.set(key, s);
+    }
+    return s;
+  }
+
+  drawTag(s, text, color, bar = -1) {
+    const key = `${text}|${color}|${bar.toFixed(2)}`;
+    if (s.userData.text === key) return;
+    s.userData.text = key;
+    const { c, tex } = s.userData;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.font = `bold 30px ${MONO}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const w = Math.min(c.width, ctx.measureText(text).width + 30);
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect((c.width - w) / 2, 8, w, 48);
+    ctx.fillStyle = color;
+    ctx.fillText(text, c.width / 2, 33, c.width - 20);
+    if (bar >= 0) {
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(c.width / 2 - 100, 66, 200, 16);
+      ctx.fillStyle = color;
+      ctx.fillRect(c.width / 2 - 98, 68, 196 * bar, 12);
+    }
+    tex.needsUpdate = true;
+  }
+
+  placeTag(s, pos, camPos) {
+    s.position.copy(pos);
+    const h = THREE.MathUtils.clamp(pos.distanceTo(camPos) * 0.05, 0.1, 1.2);
+    s.scale.set(h * (512 / 96), h, 1);
+    s.visible = true;
+  }
+
+  /** VR stand-ins for the ESP canvas: neighbor tag, chore spots, keys/crowbar. */
+  updateTags(vr, mode, color, refresh) {
+    for (const s of this.tags.values()) s.visible = false;
+    if (!vr) return;
+    const g = this.game;
+    const n = g.neighbor;
+    const cam = g.camera.getWorldPosition(new THREE.Vector3());
+    if (this.view !== 'pov') {
+      const s = this.tag('neighbor');
+      if (refresh || !s.userData.text) {
+        const task = n.task ? ` · ${n.task.station.type}` : '';
+        this.drawTag(s, `NEIGHBOR ${n.pos.distanceTo(cam).toFixed(1)}m ${mode}${task}`, color, mode === 'ATTACK' ? 1 : n.awareness);
+      }
+      this.placeTag(s, this.v.set(n.pos.x, n.pos.y + 2.35, n.pos.z), cam);
+    }
+    if (this.showGraph) {
+      for (const st of n.stations) {
+        const s = this.tag(st);
+        this.drawTag(s, st.type, '#ff4fd8');
+        this.placeTag(s, this.v.copy(st.stand).setY(st.stand.y + 0.6), cam);
+      }
+    }
+    if (this.showLoot) {
+      for (const it of g.world.items) {
+        if (!it.important || it.consumed || it.held) continue;
+        const s = this.tag(it);
+        this.drawTag(s, `◆ ${it.name}${it.container ? ` (in ${it.container.name})` : ''}`, '#ffd166');
+        this.placeTag(s, this.v.copy(it.pos).setY(it.pos.y + 0.3), cam);
+      }
+    }
   }
 }

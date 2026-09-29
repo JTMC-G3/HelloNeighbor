@@ -391,7 +391,8 @@ class Game {
     if (!this.debugTools) return;
     this.debugTools.setEnabled(on);
     this.debug = on ? this.debugTools : null;
-    if (this.state === 'playing') this.toast(on ? 'Debug mode ON  (` to turn off)' : 'Debug mode OFF', 1500);
+    const how = this.vr.active ? 'click both sticks' : '`';
+    if (this.state === 'playing') this.toast(on ? `Debug mode ON  (${how} to turn off)` : 'Debug mode OFF', 1500);
   }
 
   lockPointer() {

@@ -130,6 +130,7 @@ the Cloudflare tunnel above (`npm run share` + `cloudflared`), then open the
 | Control | What it does |
 | --- | --- |
 | **Left stick** | Walk where you're looking (click it to sprint) |
+| **Both sticks clicked in** | Debug mode on / off (see [Debug mode in VR](#debug-mode-in-vr)) |
 | **Right stick** | Snap turn 45° |
 | **Trigger** | Use what that hand's laser points at: doors, cupboards, keys, wardrobes, TVs |
 | **Grip** | Grab an item. **Let go mid-swing to throw it** (windows smash, the neighbor gets stunned) |
@@ -177,6 +178,29 @@ Tick **Debug mode** on the title screen before pressing Play (it's remembered), 
 | **L** | Show where the keys and crowbar are |
 | **K** | Freeze / unfreeze the neighbor |
 | **H** | Hide / show the debug panel |
+
+### Debug mode in VR
+
+**Click both thumbsticks in at the same time** to turn debug mode on or off. The info panel
+floats above your **left wrist** (look at your hand to read it), and the neighbor, keys and
+chore spots get floating labels instead of the on-screen ESP. The debug keys live on the right
+controller while you **hold the left stick pressed in**:
+
+| Hold left stick in + | Debug action (keyboard key) |
+| --- | --- |
+| **A** | See through the neighbor's eyes (V) |
+| **B** | Free camera (B) |
+| **Right trigger** | Teleport your body to the free camera (T) |
+| **Right grip** | Freeze / unfreeze the neighbor (K) |
+| **Right stick up** | Waypoint graph and chore spots (N) |
+| **Right stick down** | Where the keys and crowbar are (L) |
+| **Right stick left/right** | Hide / show the wrist panel (H) |
+| **Right stick click** | Debug mode off (same as clicking both sticks) |
+
+In the free camera, the left stick flies where you're looking, **A/X** go up, **B/Y** go down,
+a quick click of the left stick toggles fast mode, and the right stick snap turns. In the
+neighbor's view you ride along in his head and can still look around. The headset shows what
+each button does while you hold the left stick in. The keyboard keys above work in VR too.
 
 ---
 

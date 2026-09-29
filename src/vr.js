@@ -15,6 +15,15 @@ import * as THREE from 'three';
  *   Grip         grab an item; let go while swinging to THROW it
  *   A / X        jump                B / Y  crouch toggle (or just duck)
  *   Left trigger (pointing at nothing) toggles the flashlight in your left hand
+ *
+ * Debug mode:
+ *   Click BOTH sticks at once   debug mode on / off
+ *   Hold the LEFT stick in, then on the right controller:
+ *     A  neighbor's view (V)       B  free camera (B)
+ *     Trigger  teleport to the free camera (T)     Grip  freeze him (K)
+ *     Stick up  waypoints (N)   down  keys/crowbar (L)   left/right  wrist panel (H)
+ *   Free camera: left stick flies where you look, A/B (or X/Y) up/down,
+ *   click the left stick for speed, right stick snap turns.
  */
 
 const SNAP = Math.PI / 4;
@@ -26,7 +35,9 @@ export class VR {
     this.game = game;
     this.active = false;
     this.session = null;
-    this.input = { moveX: 0, moveY: 0, sprint: false, jump: false, crouch: false };
+    this.input = { moveX: 0, moveY: 0, sprint: false, jump: false, crouch: false, fly: 0 };
+    this.debugShift = false;
+    this.freeTurn = 0;
     this.rig = new THREE.Group();
     this.rig.name = 'vr-rig';
     game.scene.add(this.rig);
@@ -179,7 +190,9 @@ export class VR {
     const caught = !$('caughtText').classList.contains('hidden');
     const ending = g.state === 'ending';
     const held = g.player.held ? g.player.held.name : '';
-    const key = [aw, chase, target, caught, ending, held, g.player.hidden ? 1 : 0, this.toasts.map((t) => t.text).join('|')].join('#');
+    const banner = g.altView() ? g.debug.bannerText() : '';
+    const shift = this.debugShift;
+    const key = [aw, chase, target, caught, ending, held, g.player.hidden ? 1 : 0, banner, shift, this.toasts.map((t) => t.text).join('|')].join('#');
     if (key === this.hudKey) return;
     this.hudKey = key;
 
@@ -210,6 +223,18 @@ export class VR {
       ctx.font = 'bold 90px Impact, Arial Black, sans-serif';
       ctx.fillStyle = '#fff';
       ctx.fillText('TO BE CONTINUED...', W / 2, H / 2);
+    } else if (banner || shift) {
+      // Debug camera / debug controls: say what the buttons do.
+      if (banner) {
+        const parts = banner.split('  ·  ');
+        pill(parts[0], 60, 34, '#fff', 'rgba(30,60,140,0.85)');
+        parts.slice(1).forEach((t, i) => pill(t, 118 + i * 44, 24));
+      }
+      if (shift) {
+        const lines = ['DEBUG (right hand)', 'A: his view   ·   B: free camera', 'Trigger: teleport here   ·   Grip: freeze him', 'Stick: up waypoints · down keys · sideways panel'];
+        lines.forEach((t, i) => pill(t, 300 + i * 50, i ? 26 : 30, i ? '#fff' : '#7fb2ff'));
+      }
+      this.toasts.forEach((t, i) => pill(t.text, 225 + i * 36, 22));
     } else {
       // Awareness eye bar.
       if (aw > 0) {
@@ -330,8 +355,11 @@ export class VR {
     const p = g.player;
     this.rig.updateMatrixWorld(true);
 
+    const alt = g.altView();
+    const view = alt ? g.debug.view : 'player';
+    if (!alt) this.dbgView = 'player';
     // Walking around your room moves your body too (and walls stop you).
-    if (!p.hidden && !g.hideAnim && g.state === 'playing') {
+    if (!alt && !p.hidden && !g.hideAnim && g.state === 'playing') {
       const head = this.headWorld(this.tmp);
       const dx = head.x - p.ch.pos.x;
       const dz = head.z - p.ch.pos.z;
@@ -360,19 +388,77 @@ export class VR {
       return !v && was;
     };
 
-    const dead = (v) => (Math.abs(v) < 0.15 ? 0 : v);
-    this.input.moveX = dead(L.x || 0);
-    this.input.moveY = dead(L.y || 0);
-    if (edge(left, 'stick', !!L.stick)) this.input.sprint = !this.input.sprint;
-    if (!this.input.moveX && !this.input.moveY) this.input.sprint = false;
-    if (edge(right, 'a', !!R.a) || edge(left, 'a', !!L.a)) this.input.jump = true;
-    if (edge(right, 'b', !!R.b)) this.input.crouch = !this.input.crouch;
+    // Button presses this frame (tracked every frame so nothing fires late).
+    const presses = (h, S) => ({
+      trigger: edge(h, 'trigger', !!S.trigger),
+      grip: edge(h, 'grip', !!S.grip),
+      gripUp: released(h, 'grip', !!S.grip),
+      a: edge(h, 'a', !!S.a),
+      b: edge(h, 'b', !!S.b),
+    });
+    const LP = presses(left, L);
+    const RP = presses(right, R);
 
-    // Snap turn.
+    // Stick clicks. Both at once: debug mode on/off. The left one held down
+    // (with debug on) is the debug "shift" key. A quick left click: sprint.
+    const l3 = !!L.stick;
+    const r3 = !!R.stick;
+    const both = l3 && r3;
+    if (both && !this.bothSticks && g.state === 'playing') {
+      g.toggleDebug();
+      this.pulseBoth(0.5, 80);
+    }
+    this.bothSticks = both;
+    if (l3 && !this.l3) {
+      this.l3T = 0;
+      this.l3Used = false;
+    }
+    if (l3) {
+      this.l3T += dt;
+      if (r3) this.l3Used = true;
+    }
+    if (!l3 && this.l3 && !this.l3Used && this.l3T < 0.45) this.input.sprint = !this.input.sprint;
+    this.l3 = l3;
+    const shift = l3 && !!g.debug && g.state === 'playing';
+    this.debugShift = shift;
+
+    const dead = (v) => (Math.abs(v) < 0.15 ? 0 : v);
+    this.input.moveX = shift ? 0 : dead(L.x || 0);
+    this.input.moveY = shift ? 0 : dead(L.y || 0);
+    if (!this.input.moveX && !this.input.moveY && !l3) this.input.sprint = false;
+    this.input.fly = view === 'free' && !shift ? (R.a || L.a ? 1 : 0) - (R.b || L.b ? 1 : 0) : 0;
+    if (!shift && !alt) {
+      if (RP.a || LP.a) this.input.jump = true;
+      if (RP.b) this.input.crouch = !this.input.crouch;
+    }
+
     const rx = R.x || 0;
-    if (Math.abs(rx) > 0.7 && !this.turnHeld) {
+    const ry = R.y || 0;
+    if (shift) {
+      // Debug controls on the right hand.
+      const act = (code) => {
+        if (g.debug && g.debug.onKey(code)) this.pulse(right, 0.3, 40);
+        this.l3Used = true;
+      };
+      if (RP.a) act('KeyV');
+      if (RP.b) act('KeyB');
+      if (RP.trigger) act('KeyT');
+      if (RP.grip) act('KeyK');
+      const m = Math.max(Math.abs(rx), Math.abs(ry));
+      if (m > 0.7 && !this.dbgStick) {
+        this.dbgStick = true;
+        if (Math.abs(ry) > Math.abs(rx)) act(ry < 0 ? 'KeyN' : 'KeyL');
+        else act('KeyH');
+      } else if (m < 0.3) this.dbgStick = false;
+      // Don't snap turn when you let go of the left stick with the right one still pushed.
+      if (Math.abs(rx) > 0.3) this.turnHeld = true;
+    }
+
+    // Snap turn (in the free camera it turns the camera, not you).
+    if (!shift && Math.abs(rx) > 0.7 && !this.turnHeld) {
       this.turnHeld = true;
-      p.yaw -= Math.sign(rx) * SNAP;
+      if (view === 'free') this.freeTurn -= Math.sign(rx) * SNAP;
+      else if (!alt) p.yaw -= Math.sign(rx) * SNAP;
     } else if (Math.abs(rx) < 0.3) this.turnHeld = false;
 
     // Hand velocities (for throwing).
@@ -388,8 +474,9 @@ export class VR {
     // Lasers: what each hand is pointing at.
     this.promptHand = null;
     for (const h of this.hands) {
-      if (!h.source || g.state !== 'playing') {
+      if (!h.source || g.state !== 'playing' || alt || shift) {
         h.target = null;
+        h.dot.visible = false;
         h.laser.visible = false;
         continue;
       }
@@ -408,9 +495,14 @@ export class VR {
     }
 
     // Buttons.
-    for (const [h, S] of [[left, L], [right, R]]) {
-      if (g.state !== 'playing') break;
-      if (edge(h, 'trigger', !!S.trigger)) {
+    for (const [h, P] of [[left, LP], [right, RP]]) {
+      if (g.state !== 'playing' || alt) break;
+      // Let go while swinging: throw (even mid debug-shift, so it never sticks to your hand).
+      if (P.gripUp && p.held && this.heldHand === h) {
+        this.throwFrom(h);
+      }
+      if (shift) continue;
+      if (P.trigger) {
         if (h === left && !h.target && !p.hidden) {
           g.toggleFlashlight();
         } else {
@@ -419,16 +511,12 @@ export class VR {
           g.interact();
         }
       }
-      // Grip: grab / throw.
-      const gripDown = edge(h, 'grip', !!S.grip);
-      if (gripDown && h.target && h.target.item) {
+      // Grip: grab.
+      if (P.grip && h.target && h.target.item) {
         g.target = h.target;
         this.lastHand = h;
         g.interact();
         this.pulse(h, 0.3, 40);
-      }
-      if (released(h, 'grip', !!S.grip) && p.held && this.heldHand === h) {
-        this.throwFrom(h);
       }
     }
 
@@ -442,9 +530,67 @@ export class VR {
       }
     }
 
-    this.slats.visible = !!p.hidden;
+    this.slats.visible = !!p.hidden && !alt;
     this.fade.material.opacity = Number($('fade').style.opacity || 0);
     this.drawHud(dt);
+  }
+
+  // ------------------------------------------------------ debug cameras
+  /** Put the play space so your head ends up at `head`, facing along `yaw`. */
+  setRig(head, yaw) {
+    const c = this.game.camera.position; // your head inside the play space
+    const ox = c.x * Math.cos(yaw) + c.z * Math.sin(yaw);
+    const oz = -c.x * Math.sin(yaw) + c.z * Math.cos(yaw);
+    this.rig.rotation.set(0, yaw, 0);
+    this.rig.position.set(head.x - ox, head.y - c.y, head.z - oz);
+  }
+
+  /** Your head's yaw inside the play space (i.e. ignoring snap turns). */
+  localYaw() {
+    const d = this.tmp2.set(0, 0, -1).applyQuaternion(this.game.camera.quaternion);
+    return Math.atan2(-d.x, -d.z);
+  }
+
+  /**
+   * Debug cameras in the headset (called by debug.js). You can't take the
+   * camera away from a headset, so these move the play space instead and
+   * leave your head free to look around.
+   */
+  debugCamera(dbg, dt) {
+    const g = this.game;
+    if (dbg.view !== this.dbgView) {
+      this.dbgView = dbg.view;
+      // Start off looking the way he's looking, whichever way you're facing in your room.
+      this.povYawOffset = this.localYaw();
+      this.freeTurn = 0;
+    }
+    this.rig.updateMatrixWorld(true);
+    if (dbg.view === 'pov') {
+      const n = g.neighbor;
+      n.model.root.updateMatrixWorld(true);
+      const eye = n.model.head.localToWorld(this.tmp.set(0, 0.28, 0.3));
+      this.setRig(eye, n.heading + Math.PI - this.povYawOffset);
+    } else if (dbg.view === 'free') {
+      const head = this.headWorld(this.tmp);
+      let yaw = this.rig.rotation.y;
+      if (this.freeTurn) {
+        yaw += this.freeTurn;
+        this.freeTurn = 0;
+      }
+      // Fly towards where you're looking (including up/down).
+      const fwd = g.camera.getWorldDirection(this.tmp2);
+      const speed = (this.input.sprint ? 14 : 4) * dt;
+      const mx = this.input.moveX;
+      const my = -this.input.moveY;
+      head.x += (fwd.x * my - fwd.z * mx) * speed;
+      head.z += (fwd.z * my + fwd.x * mx) * speed;
+      head.y += (fwd.y * my + this.input.fly) * speed;
+      this.setRig(head, yaw);
+      dbg.free.pos.copy(head);
+      dbg.free.yaw = yaw;
+      dbg.free.pitch = 0;
+    }
+    this.rig.updateMatrixWorld(true);
   }
 
   /** Put the held item in a hand. */
