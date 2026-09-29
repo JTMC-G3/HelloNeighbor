@@ -497,7 +497,7 @@ export class Debug {
     const heard = n.lastHeard ? `r=${n.lastHeard.radius.toFixed(1)}m, ${ago(n.lastHeard.t)}` : 'nothing yet';
     const walking = !(n.task && n.task.phase === 'do') && n.pathIdx < n.path.length && !(n.state === 'patrol' && n.wait > 0);
     const goal = walking ? `${n.path.length - n.pathIdx} waypoints left` : '—';
-    const noiseLvl = p.hidden ? 'hidden' : p.crouching ? 'silent (crouched)' : p.sprinting ? 'LOUD (sprinting)' : p.moving ? 'quiet (walking)' : 'still';
+    const noiseLvl = p.hidden ? 'hidden' : p.sprinting ? 'footsteps (running)' : p.crouching ? 'silent (crouched)' : p.moving ? 'silent (walking)' : 'still';
     const locks = g.world.doors.filter((d) => d.locks.length);
     const lockText = locks.map((d) => d.locks.map((l) => (l.type === 'key' ? l.color : 'boards')).join('+')).join(', ') || 'none';
     const info = g.renderer.info.render;

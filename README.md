@@ -76,8 +76,8 @@ hosted on any static web server. It has to be served over HTTP, not opened as a 
 | --- | --- |
 | **W A S D** | Move |
 | **Mouse** (or arrow keys) | Look |
-| **Shift** | Sprint (fast, but loud) |
-| **C** / **Ctrl** | Crouch (silent, harder to spot) |
+| **Shift** | Sprint (fast, but makes a little noise) |
+| **C** / **Ctrl** | Crouch (harder to spot) |
 | **Space** | Jump (onto counters, through windows) |
 | **E** | Pick up / swap items, open doors and cupboards, use keys, hide, switch things on/off |
 | **Left click** | Throw held item |
@@ -96,7 +96,7 @@ There are no objectives or hints. Exploring and figuring things out is the game.
   but he'll hear the glass.
 * He patrols the house and yard. The **eye** at the top of the screen shows how suspicious
   he is. When it turns red he's chasing you, so break line of sight or get off his property.
-* Footsteps make noise. Sprinting is loud, walking is quieter, and crouching is silent.
+* Walking and crouching are silent. Running makes a little noise if he's close by.
 * Cupboards, fridges and chests open, and things are often tucked away inside.
 * You can hide in wardrobes. If he watched you climb in, he'll yank the doors open and drag
   you out.
