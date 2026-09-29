@@ -67,6 +67,8 @@ then be live at `https://<user>.github.io/<repo>/`.
 
 To build a static copy yourself, run `npm run build`. The output goes to `dist/` and can be
 hosted on any static web server. It has to be served over HTTP, not opened as a `file://`.
+GitHub Pages and other static hosts are single-player only: multiplayer needs the game
+server (see below).
 
 ---
 
@@ -83,7 +85,7 @@ hosted on any static web server. It has to be served over HTTP, not opened as a 
 | **Left click** | Throw held item |
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
-| **Esc** / **P** | Pause (sensitivity, volume, restart) |
+| **Esc** / **P** | Pause (sensitivity, volume, restart). In multiplayer it opens the menu without pausing |
 | **`** | Debug mode on / off (see below) |
 
 Click the game to capture the mouse.
@@ -114,6 +116,55 @@ Each house has a number, shown in the pause menu and on the end screen. **Restar
 house** / **Replay this house** play the same one again. To share a house, add `?seed=` and
 its number to the address, e.g. `http://localhost:5173/?seed=123456`. **New house** generates
 a fresh one.
+
+---
+
+## 👥 Multiplayer
+
+Up to 8 people can play in the same house. Press **Multiplayer** on the title screen:
+
+1. Everyone opens the **same game address**: the Cloudflare link from `npm run share`
+   (easiest for friends elsewhere), your Codespace's forwarded port, or
+   `http://<your-computer's-IP>:5173` on the same Wi-Fi.
+2. One person types their name and presses **Host a game**. They get a 4-letter room
+   code (and a **Copy invite link** button).
+3. Everyone else types the code and presses **Join**. If they had a different house
+   loaded, the page reloads into the host's house and rejoins by itself.
+4. The host picks a mode and presses **Start**. People can also join a game that's
+   already running.
+
+| Mode | How it plays |
+| --- | --- |
+| **Co-op** | Everyone sneaks in together and the AI neighbor hunts all of you. Keys, doors and boards are shared, so one of you can distract him while another grabs a key. Whoever he catches wakes up back on the street; the others keep going. Anyone reaching the basement wins it for everybody. |
+| **Player neighbor** | One player **is** the neighbor (the host picks who, or Random). There's no AI. The kids win if anyone gets into the basement; the neighbor wins by catching kids 3 times per kid. |
+
+Playing as the neighbor: you're a bit taller and slightly faster than the kids.
+**Click** grabs a kid in front of you, **E** on a wardrobe searches it (anyone hiding inside
+is caught), and you can open doors and throw things, but you can't pick up keys or the
+crowbar. It's your house, so you can open **padlocked doors and the front door** (boarded-up
+doors still stop you). A kid who hits you with a thrown object stuns you for a couple of
+seconds.
+
+You hear the kids by the same rules as the AI neighbor: walking and crouching are silent,
+but running, landing from a jump, and doors, cupboards and pried-off boards near you give
+them away (only on your property). When you hear a kid, a see-through silhouette in their
+colour marks where they were, visible through walls, with a timer ("Bea? · 12s"). It stays
+until you hear that kid again (it moves) or catch them. Other noises (something thrown
+landing, breaking glass, a TV left on) show a bright pulsing ring with a light beam for 8
+seconds. Anything behind you or off-screen gets an arrow at the edge of your screen.
+
+Notes:
+
+* The host's browser runs the game for everyone, so the host should have the fastest
+  computer and a steady connection. If the host leaves, the game ends for everyone.
+* **Esc** opens the menu but doesn't pause the game for anyone else.
+* Debug mode only works for the host of a co-op game.
+* On **Codespaces**, forwarded ports are private by default. For friends to join, right-click
+  port `5173` in the **Ports** panel and set **Port Visibility → Public**, then share that
+  address.
+* The server part is small: [`server/relay.js`](server/relay.js) runs inside the Vite dev
+  and preview servers on `/mp` (same port as the game) and just passes messages between
+  the host and everyone else.
 
 ---
 
@@ -187,6 +238,10 @@ src/quality.js        Graphics presets, device detection, material swap, mesh ba
 src/audio.js          Web Audio synthesized sound effects and chase music
 src/textures.js       Procedural canvas textures
 src/items.js          Throwable props and keys
+src/mp.js             Multiplayer: lobby, host snapshots, applying them on the other players
+src/net.js            WebSocket connection to the relay
+src/avatar.js         Other players (kid models, name tags, smoothing)
+server/relay.js       Multiplayer relay (rooms + message passing), plugged into Vite on /mp
 .devcontainer/        GitHub Codespaces configuration
 ```
 

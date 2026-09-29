@@ -34,6 +34,15 @@ export class Player {
     this.camOffset = new THREE.Vector3();
     this.roll = 0;
     this.moving = false;
+    this.body = { standH: STAND_H, standEye: STAND_EYE, walk: 3.7, sprint: 6.2, canCrouch: true };
+  }
+
+  /** Change size and speed (multiplayer: playing as the neighbor). */
+  setBody(opts) {
+    Object.assign(this.body, opts);
+    if (opts.radius) this.ch.radius = opts.radius;
+    this.ch.height = this.body.standH;
+    this.eyeH = this.body.standEye;
   }
 
   get pos() {
@@ -55,8 +64,8 @@ export class Player {
     this.pitch = 0;
     this.camY = p.y + this.eyeH;
     this.crouching = false;
-    this.ch.height = STAND_H;
-    this.eyeH = STAND_EYE;
+    this.ch.height = this.body.standH;
+    this.eyeH = this.body.standEye;
     this.camOffset.set(0, 0, 0);
     this.roll = 0;
     this.syncCamera(0);
@@ -77,11 +86,12 @@ export class Player {
     if (k.has('ArrowUp')) this.pitch = Math.min(1.5, this.pitch + lookSpeed);
     if (k.has('ArrowDown')) this.pitch = Math.max(-1.5, this.pitch - lookSpeed);
 
-    const wantCrouch = k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight');
+    const b = this.body;
+    const wantCrouch = b.canCrouch && (k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight'));
     if (wantCrouch) this.crouching = true;
-    else if (this.crouching && !this.physics.blockedAbove(this.ch, STAND_H)) this.crouching = false;
-    this.ch.height = this.crouching ? CROUCH_H : STAND_H;
-    const targetEye = this.crouching ? CROUCH_EYE : STAND_EYE;
+    else if (this.crouching && !this.physics.blockedAbove(this.ch, b.standH)) this.crouching = false;
+    this.ch.height = this.crouching ? CROUCH_H : b.standH;
+    const targetEye = this.crouching ? CROUCH_EYE : b.standEye;
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * 12);
 
     const f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
@@ -96,7 +106,7 @@ export class Player {
       wz /= wl;
     }
     this.sprinting = (k.has('ShiftLeft') || k.has('ShiftRight')) && f > 0 && !this.crouching;
-    const speed = this.crouching ? 1.9 : this.sprinting ? 6.2 : 3.7;
+    const speed = this.crouching ? 1.9 : this.sprinting ? b.sprint : b.walk;
     const accel = this.ch.onGround ? 14 : 3;
     const blend = Math.min(1, accel * dt);
     this.ch.vel.x += (wx * speed - this.ch.vel.x) * blend;

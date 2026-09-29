@@ -120,6 +120,15 @@ export class Neighbor {
     this.stations = [];
     this.task = null;
     this.lastChore = null;
+    // Stand-in "player" far away, for when there's nobody he could be after.
+    this.nobody = {
+      pos: new THREE.Vector3(0, 0, 1000),
+      ch: { pos: null, height: 1.7 },
+      hidden: null,
+      crouching: false,
+      eye: (out = new THREE.Vector3()) => out.set(0, 1.6, 1000),
+    };
+    this.nobody.ch.pos = this.nobody.pos;
     this.reset();
   }
 
@@ -140,6 +149,9 @@ export class Neighbor {
     if (this.task) this.endTask(true);
     this.closet = null;
     this.catchT = 0;
+    this.grab = null;
+    this.focus = null;
+    this.sawHideOf = null;
     this.ch.pos.copy(this.nav.pos(this.home || this.nav.nodes.keys().next().value));
     this.ch.vel.set(0, 0, 0);
     this.state = 'patrol';
@@ -383,7 +395,85 @@ export class Neighbor {
     this.repath = 0;
     this.awareness = 1;
     this.sound.alert();
-    game.onSpotted();
+    game.onSpotted(this.focus);
+  }
+
+  /** Whether he watched `player` climb into the wardrobe they're now in. */
+  noteHidden(player, seen) {
+    if (seen) {
+      this.sawHide = true;
+      this.sawHideOf = player;
+    } else if (this.sawHideOf === player || !this.sawHideOf) {
+      this.sawHide = false;
+      this.sawHideOf = null;
+    }
+  }
+
+  /** He's got someone: lunge, lift and shake them (3.2 s), then head home. */
+  startGrab(player) {
+    if (this.task) this.endTask(true);
+    this.grab = { player, t: 0 };
+  }
+
+  /**
+   * Who he's paying attention to when several people are sneaking around:
+   * whoever he's chasing (while he can still see them), else the closest one
+   * he can see, else whoever he was after, else the closest.
+   */
+  pickFocus(players) {
+    if (!players.length) return null;
+    if (players.length === 1) return players[0];
+    const cur = players.includes(this.focus) ? this.focus : null;
+    if (cur && this.state === 'openCloset') return cur;
+    let best = null;
+    let bestD = Infinity;
+    for (const p of players) {
+      const d = p.pos.distanceTo(this.ch.pos);
+      if (d < bestD && this.canSee(p)) {
+        best = p;
+        bestD = d;
+      }
+    }
+    if (cur && this.state === 'chase' && (!best || this.canSee(cur))) return cur;
+    if (best) return best;
+    if (cur) return cur;
+    let near = players[0];
+    for (const p of players) if (p.pos.distanceTo(this.ch.pos) < near.pos.distanceTo(this.ch.pos)) near = p;
+    return near;
+  }
+
+  /** Multiplayer clients: copy what the host's neighbor is doing, then animate. */
+  puppet(dt, s) {
+    const k = Math.min(1, dt * 12);
+    const target = this.tmp.set(s.x, s.y, s.z);
+    if (this.ch.pos.distanceTo(target) > 3) this.ch.pos.copy(target);
+    else this.ch.pos.lerp(target, k);
+    let d = s.heading - this.heading;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    this.heading += d * k;
+    this.speed = s.speed;
+    this.state = s.state;
+    this.awareness = s.awareness;
+    this.grabbing = s.grabbing;
+    this.catchT = s.catchT;
+    // Chores: same spot and phase as on the host (for poses and props).
+    const cur = this.task;
+    if (!s.station) {
+      if (cur) this.endPuppetTask();
+    } else if (!cur || cur.station !== s.station || (cur.phase === 'do') !== s.doing) {
+      if (cur) this.endPuppetTask();
+      const chore = CHORES[s.station.type];
+      this.task = { station: s.station, chore, phase: s.doing ? 'do' : 'goto', t: s.taskT, prop: null };
+      if (s.doing && chore.prop) this.holdProp(this.task, chore.prop, chore.hand || 0);
+    }
+    if (this.task) this.task.t = s.taskT;
+    this.animate(dt);
+  }
+
+  endPuppetTask() {
+    const task = this.task;
+    this.task = null;
+    if (task && task.prop) task.prop.parent.remove(task.prop);
   }
 
   hit(game, player) {
@@ -393,7 +483,7 @@ export class Neighbor {
     this.stun = 2.2;
     this.sound.grunt(this.ch.pos);
     this.lastSeen.copy(player.pos);
-    game.toast('Bonk! That stunned him for a moment.');
+    game.toastTo(player, 'Bonk! That stunned him for a moment.');
   }
 
   hear(pos, game, radius = Infinity) {
@@ -419,7 +509,7 @@ export class Neighbor {
       }
       // Tidy fellow: closes doors behind him when he isn't in a hurry.
       if (d.open && this.openedDoors.has(d) && dist > 2.6 && this.state !== 'chase') {
-        if (this.playerRef && this.playerRef.pos.distanceTo(d.center) < 1.8) continue;
+        if (this.playersRef && this.playersRef.some((p) => p.pos.distanceTo(d.center) < 1.8)) continue;
         d.setOpen(false);
         this.sound.door(d.center, false);
         this.openedDoors.delete(d);
@@ -449,19 +539,27 @@ export class Neighbor {
     }
   }
 
-  update(dt, player, game) {
-    this.playerRef = player;
+  /**
+   * `players`: everyone he could notice (one Player, or a list in multiplayer;
+   * leave out anyone he should ignore, like the debug free camera).
+   */
+  update(dt, players, game) {
+    if (!Array.isArray(players)) players = [players];
+    this.playersRef = players;
     this.gameRef = game;
     this.doorsRef = game.world.doors;
 
-    if (game.state === 'caught') {
+    if (this.grab) {
+      const g = this.grab;
+      const player = g.player;
+      g.t += dt;
       if (this.task) this.endTask(true);
       // Lunge in close, then hold on.
       const dx = player.pos.x - this.ch.pos.x;
       const dz = player.pos.z - this.ch.pos.z;
       const d = Math.hypot(dx, dz);
       // Keep about arm's length: close the gap, or step back if he's on top of you.
-      if (d > 0.95 && game.caughtT < 0.35) this.moveToward(player.pos, 4, dt);
+      if (d > 0.95 && g.t < 0.35) this.moveToward(player.pos, 4, dt);
       else if (d < 0.85 && d > 0.01) {
         this.ch.vel.x = (-dx / d) * 1.5;
         this.ch.vel.z = (-dz / d) * 1.5;
@@ -469,19 +567,23 @@ export class Neighbor {
       this.physics.moveCharacter(this.ch, dt);
       this.turnTo(Math.atan2(dx, dz), dt, 14);
       this.grabbing = true;
-      this.catchT = game.caughtT;
+      this.catchT = g.t;
       this.speed = 0;
       this.animate(dt);
+      // Then he wanders back home as if nothing happened.
+      if (g.t > 3.2) this.reset();
       return;
     }
     this.grabbing = false;
     const dbg = game.debug;
-    if (game.state !== 'playing' || (dbg && dbg.frozen)) {
+    if (!(game.state === 'playing' || game.online) || (dbg && dbg.frozen)) {
       this.animate(dt);
       return;
     }
-    // Debug free camera: he doesn't notice you at all.
-    const ghost = !!(dbg && dbg.view === 'free');
+    const player = this.pickFocus(players) || this.nobody;
+    if (player !== this.focus && this.sawHideOf && this.sawHideOf !== player) this.sawHide = false;
+    this.focus = player;
+    const ghost = false;
 
     const toP = Math.hypot(player.pos.x - this.ch.pos.x, player.pos.z - this.ch.pos.z);
     const dy = Math.abs(player.pos.y - this.ch.pos.y);
@@ -509,7 +611,7 @@ export class Neighbor {
     }
 
     // Bumping into him is a bad idea.
-    const findable = !player.hidden || this.sawHide;
+    const findable = !player.hidden || (this.sawHide && this.sawHideOf === player);
     if (toP < 0.95 && dy < 1.3 && this.state !== 'stunned' && onProp && findable && !player.hidden && !ghost) this.startChase(game);
 
     let trying = false;
@@ -541,7 +643,7 @@ export class Neighbor {
         const c = this.closet;
         this.turnTo(Math.atan2(c.inside.x - this.ch.pos.x, c.inside.z - this.ch.pos.z), dt, 10);
         this.closetT += dt;
-        if (this.closetT > 0.55) game.caught();
+        if (this.closetT > 0.55) game.neighborCaught(player);
         break;
       }
       case 'investigate': {
@@ -567,7 +669,7 @@ export class Neighbor {
         else this.lost += dt;
         if (!onProp && toP > 7) {
           // Chased you off his property.
-          game.toast('He lost interest... for now.');
+          game.toastTo(player, 'He lost interest... for now.');
           this.awareness = 0.3;
           this.startPatrol();
           break;
@@ -577,7 +679,7 @@ export class Neighbor {
           break;
         }
         // If he watched you hide, he heads for the wardrobe doors.
-        const inCloset = player.hidden && this.sawHide ? player.hidden : null;
+        const inCloset = player.hidden && this.sawHide && this.sawHideOf === player ? player.hidden : null;
         const goal = inCloset ? inCloset.out : player.pos;
         if (inCloset) {
           this.lost = 0;
@@ -585,7 +687,7 @@ export class Neighbor {
             this.state = 'openCloset';
             this.closet = inCloset;
             this.closetT = 0;
-            game.openCloset(inCloset);
+            game.openCloset(inCloset, player);
             break;
           }
         }
@@ -630,7 +732,7 @@ export class Neighbor {
     if (this.ch.pos.y < -10) this.reset();
 
     // Catch.
-    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && !player.hidden && !ghost) game.caught();
+    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && !player.hidden && !ghost) game.neighborCaught(player);
 
     this.animate(dt);
   }

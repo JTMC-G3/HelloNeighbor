@@ -21,10 +21,12 @@
         <div id="prompt"></div>
         <div id="held"></div>
         <div id="toasts"></div>
+        <div id="mpStatus" class="hidden"></div>
       </div>
 
       <div id="fps" class="hidden"></div>
       <canvas id="espCanvas" class="hidden"></canvas>
+      <canvas id="heardCanvas" class="hidden"></canvas>
       <div id="debugPanel" class="hidden"></div>
       <div id="debugBanner" class="hidden"></div>
       <div id="hideOverlay" class="hidden"><div class="hideText"><kbd>E</kbd> Leave hiding spot</div></div>
@@ -41,6 +43,7 @@
             His house is different every time you visit.
           </p>
           <button id="playBtn" class="btn">Play</button>
+          <button id="mpBtn" class="btn secondary">Multiplayer</button>
           <div class="settings">
             <label>Graphics
               <select class="qualitySel">
@@ -73,6 +76,42 @@
         </div>
       </div>
 
+      <div id="mpMenu" class="overlay hidden">
+        <div class="panel">
+          <h2>Multiplayer</h2>
+          <label class="field">Your name <input id="mpName" maxlength="16" placeholder="Player" autocomplete="off" /></label>
+          <div id="mpStart">
+            <button id="mpHostBtn" class="btn">Host a game</button>
+            <div class="joinRow">
+              <input id="mpCode" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" />
+              <button id="mpJoinBtn" class="btn secondary">Join</button>
+            </div>
+            <p class="tip">Everyone opens the same game address (the Codespaces or Cloudflare link), one person hosts, and the others type the room code.</p>
+          </div>
+          <div id="mpLobby" class="hidden">
+            <div class="roomCode">Room code <b id="mpRoom"></b> <button id="mpCopy" class="btn tiny">Copy invite link</button></div>
+            <div class="modes">
+              <label class="mode"><input type="radio" name="mpMode" value="coop" checked /> <b>Co-op</b> <span>Everyone sneaks in together. The AI neighbor hunts you all.</span></label>
+              <label class="mode"><input type="radio" name="mpMode" value="versus" /> <b>Player neighbor</b> <span>One of you IS the neighbor. Everyone else sneaks in.</span></label>
+            </div>
+            <label id="mpNeighborRow" class="field hidden">Who plays the neighbor? <select id="mpNeighbor"></select></label>
+            <ul id="mpPlayers"></ul>
+            <button id="mpGo" class="btn">Start</button>
+            <div id="mpWait" class="tip"></div>
+          </div>
+          <div id="mpMsg" class="tip"></div>
+          <button id="mpBack" class="btn secondary">Back</button>
+        </div>
+      </div>
+
+      <div id="mpGone" class="overlay hidden">
+        <div class="panel small">
+          <h2>Disconnected</h2>
+          <p id="mpGoneText" class="blurb"></p>
+          <button id="mpGoneBtn" class="btn">Back to the menu</button>
+        </div>
+      </div>
+
       <div id="pause" class="overlay hidden">
         <div class="panel small">
           <h2>Paused</h2>
@@ -95,8 +134,10 @@
             </label>
             <label class="check"><input type="checkbox" class="fpsChk" /> Show FPS</label>
           </div>
-          <button id="restartBtn" class="btn secondary">Restart this house</button>
-          <button class="btn secondary newHouseBtn">New house</button>
+          <button id="restartBtn" class="btn secondary spOnly">Restart this house</button>
+          <button class="btn secondary newHouseBtn spOnly">New house</button>
+          <p class="tip mpOnly hidden">Multiplayer: the game keeps going while this menu is open.</p>
+          <button class="btn secondary leaveBtn mpOnly hidden">Leave game</button>
           <p id="lockNote" class="tip hidden">
             Your browser blocked mouse capture here (common in embedded previews such as the VS Code
             Simple Browser). Open the game in a normal browser tab, or drag with the mouse / use the arrow keys to look.
@@ -106,11 +147,12 @@
 
       <div id="end" class="overlay hidden">
         <div class="panel">
-          <h1 class="title small">TO BE<br />CONTINUED...</h1>
-          <p class="blurb">You made it into the neighbor's basement. What you found down there raises more questions than it answers.</p>
+          <h1 id="endTitle" class="title small">TO BE<br />CONTINUED...</h1>
+          <p id="endBlurb" class="blurb">You made it into the neighbor's basement. What you found down there raises more questions than it answers.</p>
           <div id="stats"></div>
-          <button class="btn newHouseBtn">New house</button>
-          <button id="againBtn" class="btn secondary">Replay this house</button>
+          <button class="btn newHouseBtn spOnly">New house</button>
+          <button id="againBtn" class="btn secondary spOnly">Replay this house</button>
+          <button class="btn leaveBtn mpOnly hidden">Back to the menu</button>
         </div>
       </div>
     </div>
