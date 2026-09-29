@@ -9,11 +9,13 @@ import { Sound } from './audio.js';
 import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality, adapt } from './quality.js';
 import { randomSeed } from './rng.js';
 import { Debug } from './debug.js';
+import { Multiplayer } from './mp.js';
 
 const REACH = 2.5;
 // Things that block reaching for an item: walls, glass, closed cupboards (not doors, handled separately).
 const blocksReach = (c) => c.kind !== 'door' && !(c.container && c.container.t > 0.3);
 const $ = (id) => document.getElementById(id);
+const V3 = (a) => new THREE.Vector3(Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0);
 
 class Game {
   constructor() {
@@ -23,6 +25,11 @@ class Game {
     this.catches = 0;
     this.noises = [];
     this.pointerLockFailed = false;
+    // Multiplayer (see mp.js): online once a game has started; the host is the authority.
+    this.online = false;
+    this.role = 'kid';
+    this.menuOpen = false;
+    this.stunned = 0;
     // Every visit is a different house; ?seed=123456 replays a specific one.
     const seedParam = Number(new URLSearchParams(window.location.search).get('seed'));
     this.seed = Number.isFinite(seedParam) && seedParam > 0 ? Math.floor(seedParam) : randomSeed();
@@ -71,7 +78,19 @@ class Game {
     this.world = buildWorld(scene, this.physics, this.seed);
     this.nav = new Nav(this.physics, this.world.navData);
     this.player = new Player(this.camera, this.physics, this.sound);
+    this.player.id = 0;
+    this.player.role = 'kid';
     this.neighbor = new Neighbor(scene, this.world.textures, this.physics, this.nav, this.sound);
+    // Sounds of things happening in the world (everyone hears these in multiplayer).
+    this.sfx = this.sound;
+    this.world.items.forEach((it, i) => {
+      it.idx = i;
+      it.holder = -1;
+    });
+    this.world.doors.forEach((d, i) => { d.idx = i; });
+    this.world.containers.forEach((c, i) => { c.idx = i; });
+    this.world.appliances.forEach((a, i) => { a.idx = i; });
+    this.world.hideSpots.forEach((h, i) => { h.idx = i; });
     const nd = this.world.navData;
     this.neighbor.setRoutes(nd.patrol, nd.home, nd.guard);
     // Chores he can actually walk to in this house.
@@ -102,6 +121,7 @@ class Game {
 
     this.bindInput();
     this.bindSettings();
+    this.mp = new Multiplayer(this);
     window.addEventListener('resize', () => this.onResize());
 
     this.lastTime = performance.now();
@@ -280,7 +300,7 @@ class Game {
     this.drag = null;
 
     document.addEventListener('keydown', (e) => {
-      if (this.state !== 'playing') return;
+      if (this.state !== 'playing' || this.menuOpen) return;
       p.keys.add(e.code);
       if (e.repeat) return;
       if (e.code === 'Backquote') {
@@ -307,7 +327,7 @@ class Game {
       p.look(dx, dy);
     };
     document.addEventListener('mousemove', (e) => {
-      if (this.state !== 'playing') return;
+      if (this.state !== 'playing' || this.menuOpen) return;
       if (document.pointerLockElement === this.canvas) {
         // Browsers sometimes report a huge bogus delta right after locking.
         if (performance.now() - this.lockedAt < 120) return;
@@ -321,9 +341,9 @@ class Game {
       }
     });
     this.canvas.addEventListener('mousedown', (e) => {
-      if (this.state !== 'playing') return;
+      if (this.state !== 'playing' || this.menuOpen) return;
       if (document.pointerLockElement === this.canvas) {
-        if (e.button === 0) this.throwHeld();
+        if (e.button === 0) this.primary();
         if (e.button === 2) this.drop();
       } else {
         this.drag = { x: e.clientX, y: e.clientY, moved: 0, button: e.button };
@@ -332,7 +352,7 @@ class Game {
     });
     window.addEventListener('mouseup', () => {
       if (this.drag && this.drag.moved < 6 && this.pointerLockFailed && this.state === 'playing') {
-        if (this.drag.button === 0) this.throwHeld();
+        if (this.drag.button === 0) this.primary();
         if (this.drag.button === 2) this.drop();
       }
       this.drag = null;
@@ -352,6 +372,7 @@ class Game {
 
     $('playBtn').addEventListener('click', () => this.start());
     $('resumeBtn').addEventListener('click', () => this.resume());
+    for (const b of document.querySelectorAll('.leaveBtn')) b.addEventListener('click', () => this.mp.leave());
     // Same house again (keeps the seed in the URL) or a brand-new house.
     const replay = () => {
       window.location.search = `?seed=${this.seed}`;
@@ -373,6 +394,10 @@ class Game {
    * built once and kept; `this.debug` is only set while they're switched on.
    */
   toggleDebug(on = !this.debug) {
+    if (on && this.online && !(this.mp.isHost && this.mp.mode === 'coop')) {
+      this.toast('Debug mode is only for the host of a co-op game.', 2200);
+      return;
+    }
     if (on && !this.debugTools) this.debugTools = new Debug(this);
     if (!this.debugTools) return;
     this.debugTools.setEnabled(on);
@@ -400,8 +425,57 @@ class Game {
     this.toast("There's something strange going on across the street...");
   }
 
+  /** Multiplayer game started (see mp.js). `role` is 'kid' or 'neighbor'. */
+  startOnline(role) {
+    this.sound.init();
+    this.online = true;
+    this.role = role;
+    this.player.role = role;
+    this.player.id = this.mp.myId;
+    if (this.mp.isHost) {
+      this.sfx = this.mp.shareSounds(this.sound);
+      this.neighbor.sound = this.sfx;
+    }
+    $('menu').classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    $('mpStatus').classList.remove('hidden');
+    for (const el of document.querySelectorAll('.spOnly')) el.classList.add('hidden');
+    for (const el of document.querySelectorAll('.mpOnly')) el.classList.remove('hidden');
+    this.state = 'playing';
+    const versus = this.mp.mode === 'versus';
+    $('eye').classList.toggle('hidden', versus);
+    if (role === 'neighbor') {
+      // You ARE the neighbor: taller, a bit quicker, and you start at home.
+      this.player.setBody({ standH: 1.95, standEye: 1.8, radius: 0.33, walk: 3.4, sprint: 6.0, canCrouch: false });
+      this.player.spawn(this.nav.pos(this.world.navData.home), Math.PI);
+      this.neighbor.model.root.visible = false;
+      this.toast('You are the NEIGHBOR. Keep those kids out of your basement!', 4500);
+      this.toast('Click: grab a kid · E on a wardrobe: search it', 6000);
+    } else {
+      this.player.spawn(this.spawnPoint(), 0);
+      this.toast(versus ? 'One of your friends is the neighbor. Get into his basement!' : "There's something strange going on across the street...", 4000);
+    }
+    this.lockPointer();
+  }
+
+  /** Where you wake up: the street, spread out a little in multiplayer. */
+  spawnPoint() {
+    const p = SPAWN.clone();
+    if (this.online) p.x += ((this.mp.myId % 5) - 2) * 0.8;
+    return p;
+  }
+
   pause() {
     if (this.state !== 'playing') return;
+    if (this.online) {
+      // Can't stop the world for everyone else: just show the menu.
+      if (this.menuOpen) return;
+      this.menuOpen = true;
+      this.player.keys.clear();
+      $('pause').classList.remove('hidden');
+      if (document.pointerLockElement) document.exitPointerLock();
+      return;
+    }
     this.state = 'paused';
     this.player.keys.clear();
     $('pause').classList.remove('hidden');
@@ -409,6 +483,12 @@ class Game {
   }
 
   resume() {
+    if (this.menuOpen) {
+      this.menuOpen = false;
+      $('pause').classList.add('hidden');
+      if (!this.pointerLockFailed) this.lockPointer();
+      return;
+    }
     if (this.state !== 'paused') return;
     $('pause').classList.add('hidden');
     this.state = 'playing';
@@ -432,6 +512,12 @@ class Game {
 
   emitNoise(pos, radius) {
     this.noises.push({ pos: pos.clone(), radius });
+  }
+
+  /** A message for one player (the local one, or sent to a remote one). */
+  toastTo(player, text, ms) {
+    if (this.online) this.mp.toastTo(player, text, ms);
+    else this.toast(text, ms);
   }
 
   toast(text, ms = 3200) {
@@ -539,7 +625,7 @@ class Game {
 
   interact() {
     const p = this.player;
-    if (this.hideAnim || this.altView()) return;
+    if (this.hideAnim || this.altView() || this.stunned > 0) return;
     if (p.hidden) {
       this.leaveHiding();
       return;
@@ -547,58 +633,199 @@ class Game {
     const t = this.target;
     if (!t) return;
     if (t.item) {
-      const old = p.held;
-      if (old) this.release(old, true);
-      this.pickUp(t.item);
+      if (this.role === 'neighbor' && t.item.important) {
+        this.toast("You don't need that. Catch those kids!", 1800);
+        return;
+      }
+      this.request({ a: 'pick', i: t.item.idx });
       return;
     }
     if (t.container) {
-      const c = t.container;
-      c.open = !c.open;
-      this.sound.door(c.panel.getWorldPosition(new THREE.Vector3()), c.open);
-      this.emitNoise(p.pos, 2.5);
+      this.request({ a: 'cont', i: t.container.idx });
       return;
     }
     if (t.hide) {
-      this.hide(t.hide);
+      if (this.role === 'neighbor') this.request({ a: 'search', i: t.hide.idx });
+      else this.hide(t.hide);
       return;
     }
     if (t.appliance) {
-      this.setAppliance(t.appliance, !t.appliance.on);
+      this.request({ a: 'app', i: t.appliance.idx });
       return;
     }
     const d = t.door;
     if (d.locked && !d.open) {
-      const lock = this.usableLock(d);
-      if (lock) {
-        d.removeLock(lock);
-        if (lock.type === 'key') {
-          const key = p.held;
-          this.release(key, false);
-          key.consumed = true;
-          key.mesh.visible = false;
-          this.sound.unlock();
-        } else {
-          this.sound.pry(d.center);
-          this.emitNoise(d.center, 8);
-        }
-        if (!d.locked) {
-          d.setOpen(true);
-          this.sound.door(d.center, true);
-        } else {
-          this.toast(`Still ${this.describeLocks(d).toLowerCase()}`);
-        }
+      if (this.usableLock(d)) {
+        this.request({ a: 'lock', i: d.idx });
       } else {
         this.sound.locked(d.center);
         this.toast(this.describeLocks(d));
       }
       return;
     }
-    d.setOpen(!d.open);
-    this.sound.door(d.center, d.open);
-    // Doors creak: the neighbor may hear it if he's close.
-    this.emitNoise(d.center, 3.5);
-    this.neighbor.openedDoors.delete(d);
+    this.request({ a: 'door', i: d.idx });
+  }
+
+  /** Do something to the world: directly (single player / host) or by asking the host. */
+  request(act) {
+    if (!this.online || this.mp.isHost) this.applyAct(this.player, act);
+    else this.mp.sendAct(act);
+  }
+
+  /**
+   * The one place world changes happen (single player, or the multiplayer
+   * host). `actor` is whoever did it: the local Player or a remote Peer.
+   */
+  applyAct(actor, act) {
+    const w = this.world;
+    const i = Number(act.i);
+    switch (act.a) {
+      case 'pick': {
+        const it = w.items[i];
+        if (!it || it.held || it.consumed || (it.container && it.container.t < 0.3)) return;
+        if (actor.role === 'neighbor' && it.important) return;
+        if (actor !== this.player && it.pos.distanceTo(actor.pos) > 5) return;
+        this.grabItem(actor, it);
+        break;
+      }
+      case 'rel': {
+        const it = actor.held;
+        if (!it || it.idx !== i) return;
+        this.freeItem(actor, it, V3(act.p), V3(act.v), !!act.th, !!act.home);
+        break;
+      }
+      case 'cont': {
+        const c = w.containers[i];
+        if (!c) return;
+        c.open = !c.open;
+        this.sfx.door(c.panel.getWorldPosition(new THREE.Vector3()), c.open);
+        this.emitNoise(actor.pos, 2.5);
+        break;
+      }
+      case 'app': {
+        const app = w.appliances[i];
+        if (app) this.setAppliance(app, !app.on);
+        break;
+      }
+      case 'door': {
+        const d = w.doors[i];
+        if (!d || (d.locked && !d.open)) return;
+        d.setOpen(!d.open);
+        this.sfx.door(d.center, d.open);
+        // Doors creak: the neighbor may hear it if he's close.
+        this.emitNoise(d.center, 3.5);
+        this.neighbor.openedDoors.delete(d);
+        break;
+      }
+      case 'lock':
+        this.useLock(actor, w.doors[i]);
+        break;
+      case 'spot': {
+        // Someone climbing in or out of a wardrobe (they animate it themselves).
+        const h = w.hideSpots[i];
+        const v = act.v ? 1 : 0;
+        if (!h || h.target === v) return;
+        h.target = v;
+        if (actor !== this.player) {
+          this.sound.door(h.out, v === 1);
+          this.mp.shareSound('door', [h.out, v === 1], actor.id);
+        }
+        break;
+      }
+      case 'noise':
+        if (Array.isArray(act.p)) this.emitNoise(V3(act.p), Math.min(30, Number(act.r) || 0));
+        break;
+      case 'search':
+        this.searchWardrobe(actor, w.hideSpots[i]);
+        break;
+      case 'grab':
+        this.grabKid(actor, Number(act.id));
+        break;
+      case 'end':
+        if (this.online && actor.role === 'kid') this.mp.finish('kids', actor);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Unlock with the held key / pry off boards with the crowbar. */
+  useLock(actor, d) {
+    if (!d || !d.locked || d.open) return;
+    const held = actor.held;
+    const lock = held && d.locks.find((l) => (l.type === 'key' && held.key === l.color) || (l.type === 'boards' && held.type === 'crowbar'));
+    if (!lock) return;
+    d.removeLock(lock);
+    if (lock.type === 'key') {
+      this.freeItem(actor, held, held.pos, new THREE.Vector3(), false, false);
+      held.consumed = true;
+      held.mesh.visible = false;
+      if (this.online) this.mp.soundTo(actor, 'unlock');
+      else this.sound.unlock();
+    } else {
+      this.sfx.pry(d.center);
+      this.emitNoise(d.center, 8);
+    }
+    if (!d.locked) {
+      d.setOpen(true);
+      this.sfx.door(d.center, true);
+    } else {
+      this.toastTo(actor, `Still ${this.describeLocks(d).toLowerCase()}`);
+    }
+  }
+
+  /** Versus: the neighbor player yanks a wardrobe open. Anyone inside is caught. */
+  searchWardrobe(actor, spot) {
+    if (!spot || actor.role !== 'neighbor') return;
+    spot.target = 1;
+    this.sfx.door(spot.out, true);
+    clearTimeout(spot.closeTimer);
+    spot.closeTimer = setTimeout(() => {
+      if (spot.target === 1 && ![this.player, ...this.mp.peers.values()].some((p) => p.hidden === spot)) {
+        spot.target = 0;
+        this.sfx.door(spot.out, false);
+      }
+    }, 1500);
+    const inside = [this.player, ...this.mp.peers.values()].filter((p) => p.role === 'kid' && p.hidden === spot);
+    if (!inside.length) this.toastTo(actor, 'Nobody in there.', 1500);
+    for (const kid of inside) this.mp.catchPlayer(kid);
+  }
+
+  /** Versus: the neighbor player grabs a kid in front of them. */
+  grabKid(actor, id) {
+    if (!this.online || actor.role !== 'neighbor' || this.state === 'ending') return;
+    const kid = id === this.mp.myId ? this.player : this.mp.peers.get(id);
+    if (!kid || kid.role !== 'kid' || kid.hidden) return;
+    if ((kid === this.player && this.state === 'caught') || kid.caughtAnim) return;
+    const dist = Math.hypot(kid.pos.x - actor.pos.x, kid.pos.z - actor.pos.z);
+    if (dist > 2.6 || Math.abs(kid.pos.y - actor.pos.y) > 1.6) return;
+    this.mp.catchPlayer(kid);
+  }
+
+  /** Left click: throw what you're holding (or, as the neighbor, grab a kid). */
+  primary() {
+    if (this.player.held || this.role !== 'neighbor') {
+      this.throwHeld();
+      return;
+    }
+    if (this.stunned > 0 || this.grabCooldown > this.time) return;
+    this.grabCooldown = this.time + 0.8;
+    const eye = this.camera.position;
+    const dir = this.camera.getWorldDirection(new THREE.Vector3());
+    let best = null;
+    let bestD = 2.1;
+    for (const peer of this.mp.peers.values()) {
+      if (peer.role !== 'kid' || peer.hidden || peer.caughtAnim) continue;
+      const to = peer.eye(new THREE.Vector3()).sub(eye);
+      to.y *= 0.5;
+      const d = to.length();
+      if (d < bestD && to.normalize().dot(dir) > 0.55) {
+        best = peer;
+        bestD = d;
+      }
+    }
+    if (best) this.request({ a: 'grab', id: best.id });
+    else this.sound.throwWhoosh();
   }
 
   // ------------------------------------------------------------- hiding
@@ -610,8 +837,17 @@ class Game {
     p.ch.vel.set(0, 0, 0);
     p.crouching = false;
     this.hideAnim = { spot, dir: 'in', t: 0, from: p.ch.pos.clone(), yaw0: p.yaw, pitch0: p.pitch, seen: false };
-    spot.target = 1;
-    this.sound.door(spot.inside, true);
+    this.setSpot(spot, 1, spot.inside);
+  }
+
+  /** Your own wardrobe doors swinging (others hear it through the host). */
+  setSpot(spot, v, at) {
+    spot.target = v;
+    this.sound.door(at, v === 1);
+    if (this.online) {
+      if (this.mp.isHost) this.mp.shareSound('door', [at, v === 1]);
+      else this.mp.sendAct({ a: 'spot', i: spot.idx, v });
+    }
   }
 
   /** Climb back out (0.5 s). */
@@ -620,12 +856,11 @@ class Game {
     const spot = p.hidden;
     if (!spot || this.hideAnim) return;
     p.hidden = null;
-    this.neighbor.sawHide = false;
+    if (!this.online || this.mp.isHost) this.neighbor.noteHidden(p, false);
     spot.setVisible(true);
-    spot.target = 1;
     $('hideOverlay').classList.add('hidden');
     this.hideAnim = { spot, dir: 'out', t: 0, from: p.ch.pos.clone(), yaw0: p.yaw, pitch0: p.pitch };
-    this.sound.door(spot.out, true);
+    this.setSpot(spot, 1, spot.out);
   }
 
   updateHideAnim(dt) {
@@ -638,30 +873,24 @@ class Game {
     const turn = (from, to, k) => from + Math.atan2(Math.sin(to - from), Math.cos(to - from)) * k;
     if (a.dir === 'in') {
       // 0-0.25 doors swing open, 0.1-0.5 step in and turn round, 0.45-0.7 pull the doors shut.
-      if (n.sees) a.seen = true;
+      if (n.sees && n.focus === p) a.seen = true;
       const k = ease((a.t - 0.1) / 0.4);
       p.ch.pos.lerpVectors(a.from, spot.inside, k);
       p.yaw = turn(a.yaw0, spot.yaw, k);
       p.pitch = THREE.MathUtils.lerp(a.pitch0, -0.05, k);
-      if (a.t > 0.45 && spot.target !== 0) {
-        spot.target = 0;
-        this.sound.door(spot.inside, false);
-      }
+      if (a.t > 0.45 && spot.target !== 0) this.setSpot(spot, 0, spot.inside);
       if (a.t >= 0.7) {
         this.hideAnim = null;
         p.hidden = spot;
         spot.setVisible(false);
         $('hideOverlay').classList.remove('hidden');
         // If he watched you climb in, he knows exactly where you are.
-        n.sawHide = a.seen || n.sees || (n.state === 'chase' && n.lost < 0.8);
+        if (!this.online || this.mp.isHost) n.noteHidden(p, a.seen || (n.focus === p && (n.sees || (n.state === 'chase' && n.lost < 0.8))));
       }
     } else {
       const k = ease((a.t - 0.08) / 0.3);
       p.ch.pos.lerpVectors(a.from, spot.out, k);
-      if (a.t > 0.35 && spot.target !== 0) {
-        spot.target = 0;
-        this.sound.door(spot.out, false);
-      }
+      if (a.t > 0.35 && spot.target !== 0) this.setSpot(spot, 0, spot.out);
       if (a.t >= 0.5) {
         this.hideAnim = null;
         p.ch.pos.copy(spot.out);
@@ -671,22 +900,43 @@ class Game {
     p.syncCamera(dt);
   }
 
-  /** The neighbor yanks open the wardrobe you're hiding in. */
-  openCloset(spot) {
-    spot.setVisible(true);
+  /** The neighbor yanks open the wardrobe `player` is hiding in. */
+  openCloset(spot, player = this.player) {
     spot.target = 1;
-    $('hideOverlay').classList.add('hidden');
-    this.sound.door(spot.out, true);
-    this.sound.alert();
+    if (player === this.player) {
+      spot.setVisible(true);
+      $('hideOverlay').classList.add('hidden');
+    }
+    this.sfx.door(spot.out, true);
+    this.sfx.alert();
+  }
+
+  /** Host: a remote player finished climbing into a wardrobe. Did he see? */
+  peerHid(peer) {
+    const n = this.neighbor;
+    if (this.mp.mode !== 'coop') return;
+    const seen = n.focus === peer && (n.sees || (n.state === 'chase' && n.lost < 0.8) || this.time - (n.lastSeenAt || -9) < 0.8);
+    n.noteHidden(peer, seen);
+  }
+
+  /** The neighbor (AI) caught someone. */
+  neighborCaught(player) {
+    this.neighbor.startGrab(player);
+    if (this.online) this.mp.catchPlayer(player, player === this.player ? null : `He caught ${player.name}!`);
+    else this.caught();
   }
 
   // --------------------------------------------------------- appliances
   setAppliance(app, on, byNeighbor = false) {
+    this.setApplianceVisual(app, on);
+    this.sound.click();
+    if (byNeighbor && this.player.pos.distanceTo(app.pos) < 12) this.toast(`He switched off the ${app.name.toLowerCase()}.`, 2200);
+  }
+
+  setApplianceVisual(app, on) {
     app.on = on;
     app.timer = 0;
     if (app.kind === 'tv') app.mesh.material = adapt(on ? app.onMat : app.offMat);
-    this.sound.click();
-    if (byNeighbor && this.player.pos.distanceTo(app.pos) < 12) this.toast(`He switched off the ${app.name.toLowerCase()}.`, 2200);
   }
 
   updateAppliances(dt) {
@@ -695,29 +945,75 @@ class Game {
       app.timer -= dt;
       if (app.timer <= 0) {
         app.timer = 1.4;
-        this.sound.appliance(app.pos, app.kind);
+        this.sfx.appliance(app.pos, app.kind);
         // Loud enough to draw him over from anywhere in the house (unless he's the one watching).
         if (!app.byNeighbor) this.emitNoise(app.pos, 22);
       }
     }
   }
 
-  pickUp(it) {
+  /** Authority: `actor` now holds `it` (swapping out whatever they had). */
+  grabItem(actor, it) {
+    const old = actor.held;
+    if (old) {
+      const at = actor === this.player ? this.releasePose(true).pos : actor.pos.clone().setY(actor.pos.y + 0.9);
+      this.freeItem(actor, old, at, new THREE.Vector3(), false, false);
+    }
+    it.held = true;
+    it.holder = actor.id;
+    it.sleeping = true;
+    it.thrown = false;
+    it.vel.set(0, 0, 0);
+    if (it.container) {
+      it.container.item = null;
+      it.container = null;
+    }
+    if (actor === this.player) {
+      this.holdVisual(it);
+    } else {
+      actor.attachItem(it);
+      it.holderPeer = actor;
+    }
+  }
+
+  /** Authority: `actor` lets go of `it` at `pos` moving at `vel` (important items can go `home`). */
+  freeItem(actor, it, pos, vel, thrown, home) {
+    if (actor === this.player) {
+      this.dropVisual(it);
+    } else {
+      actor.detachItem(it);
+      it.holderPeer = null;
+    }
+    if (actor.held === it) actor.held = null;
+    it.held = false;
+    it.holder = -1;
+    if (home && it.important) {
+      it.resetHome();
+      if (it.container) it.container.item = it;
+      return;
+    }
+    it.pos.copy(pos);
+    it.mesh.position.copy(pos);
+    it.vel.copy(vel);
+    it.sleeping = false;
+    it.sleepTimer = 0;
+    it.thrown = thrown;
+    it.thrownBy = thrown ? actor : null;
+    if (thrown) it.spin.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14);
+  }
+
+  /** Show `it` in your hand. */
+  holdVisual(it) {
     const p = this.player;
     p.held = it;
     it.held = true;
-    it.sleeping = true;
-    it.vel.set(0, 0, 0);
+    it.mesh.visible = true;
     this.camera.add(it.mesh);
     const big = it.radius > 0.2;
     it.mesh.position.set(big ? 0.28 : 0.3, big ? -0.42 : -0.26, big ? -0.75 : -0.55);
     it.mesh.rotation.set(0.1, big ? 0.4 : -0.6, 0);
     it.mesh.scale.setScalar(big ? 0.75 : 1);
     it.mesh.traverse((o) => { o.castShadow = false; });
-    if (it.container) {
-      it.container.item = null;
-      it.container = null;
-    }
     if (it.important) {
       this.sound.keyPickup();
       this.toast(`Picked up: ${it.name}`, 2200);
@@ -727,26 +1023,48 @@ class Game {
     $('held').innerHTML = `Holding: <b>${it.name}</b> &nbsp;·&nbsp; <kbd>Click</kbd> throw &nbsp;<kbd>Q</kbd> drop`;
   }
 
-  /** Detach the held item from the camera into the world in front of the player. */
-  release(it, gentle) {
+  /** Take `it` out of your hand and put it back in the world. */
+  dropVisual(it) {
     const p = this.player;
-    if (p.held !== it) return;
-    p.held = null;
-    it.held = false;
+    if (p.held === it) p.held = null;
     this.scene.add(it.mesh);
     it.mesh.scale.setScalar(1);
-    it.mesh.traverse((o) => { o.castShadow = true; });
-    const eye = this.camera.position.clone();
-    const dir = this.camera.getWorldDirection(new THREE.Vector3());
-    it.pos.copy(eye).addScaledVector(dir, gentle ? 0.45 : 0.35);
-    it.pos.y -= gentle ? 0.25 : 0.1;
-    it.mesh.position.copy(it.pos);
     it.mesh.rotation.set(0, p.yaw, 0);
-    it.vel.set(p.ch.vel.x * 0.5, 0, p.ch.vel.z * 0.5);
-    it.sleeping = false;
-    it.sleepTimer = 0;
-    it.thrown = false;
+    it.mesh.traverse((o) => { o.castShadow = true; });
     $('held').innerHTML = '';
+  }
+
+  /** Where something you let go of starts: just in front of you. */
+  releasePose(gentle) {
+    const p = this.player;
+    const dir = this.camera.getWorldDirection(new THREE.Vector3());
+    const pos = this.camera.position.clone().addScaledVector(dir, gentle ? 0.45 : 0.35);
+    pos.y -= gentle ? 0.25 : 0.1;
+    return { pos, dir, vel: new THREE.Vector3(p.ch.vel.x * 0.5, 0, p.ch.vel.z * 0.5) };
+  }
+
+  /** Let go of the held item: drop it, or throw it. */
+  release(it, gentle, throwIt = false) {
+    const p = this.player;
+    if (p.held !== it) return;
+    const { pos, dir, vel } = this.releasePose(gentle);
+    if (throwIt) {
+      vel.addScaledVector(dir, it.radius > 0.2 ? 10 : 14);
+      vel.y += 1.5;
+      this.sound.throwWhoosh();
+    }
+    if (!this.online || this.mp.isHost) {
+      this.freeItem(p, it, pos, vel, throwIt, false);
+      return;
+    }
+    // Client: the host simulates it from here on.
+    this.mp.sendAct({ a: 'rel', i: it.idx, p: pos.toArray(), v: vel.toArray(), th: throwIt });
+    this.mp.released.set(it.idx, this.time);
+    this.dropVisual(it);
+    it.held = false;
+    it.pos.copy(pos);
+    it.mesh.position.copy(pos);
+    if (it.netPos) it.netPos.copy(pos);
   }
 
   /** True while a debug camera (neighbor's view / free cam) has the camera. */
@@ -763,18 +1081,12 @@ class Game {
   throwHeld() {
     const it = this.player.held;
     if (!it || this.player.hidden || this.hideAnim || this.altView()) return;
-    this.release(it, false);
-    const dir = this.camera.getWorldDirection(new THREE.Vector3());
-    const power = it.radius > 0.2 ? 10 : 14;
-    it.vel.addScaledVector(dir, power);
-    it.vel.y += 1.5;
-    it.spin.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14);
-    it.thrown = true;
-    this.sound.throwWhoosh();
+    this.release(it, false, true);
   }
 
   breakWindow(win, dir) {
     if (win.broken) return;
+    if (this.online && this.mp.isHost) this.mp.net.toAll({ k: 'win', i: win.index, d: [dir.x, dir.y, dir.z] });
     win.broken = true;
     win.hide();
     win.collider.enabled = false;
@@ -829,18 +1141,19 @@ class Game {
         },
         (speed) => {
           if (speed > 2.2) {
-            this.sound.thud(it.pos, speed);
+            this.sfx.thud(it.pos, speed);
             this.emitNoise(it.pos, Math.min(14, speed * 1.4));
           }
         },
       );
 
       // Beaning the neighbor stuns him.
-      if (it.thrown && it.vel.lengthSq() > 16) {
+      if (it.thrown && it.vel.lengthSq() > 16 && it.thrownBy && it.thrownBy.role !== 'neighbor') {
         const dx = it.pos.x - nb.pos.x;
         const dz = it.pos.z - nb.pos.z;
         if (Math.hypot(dx, dz) < it.radius + 0.4 && it.pos.y > nb.pos.y && it.pos.y < nb.pos.y + 2.05) {
-          nb.hit(this, this.player);
+          if (this.online && this.mp.mode === 'versus') this.stunNeighborPlayer(it.thrownBy);
+          else nb.hit(this, it.thrownBy || this.player);
           it.vel.x *= -0.3;
           it.vel.z *= -0.3;
           it.thrown = false;
@@ -870,9 +1183,26 @@ class Game {
   }
 
   // ========================================================= game events
-  onSpotted() {
+  onSpotted(player = this.player) {
+    if (player !== this.player) return; // they find out from the host's snapshot
     this.sound.setChase(true);
     this.toast('He spotted you! RUN!', 2000);
+  }
+
+  /** Versus: a kid beaned the neighbor player. */
+  stunNeighborPlayer(by) {
+    const nid = this.mp.neighborId;
+    this.sfx.grunt(this.neighbor.pos);
+    this.toastTo(by, 'Bonk! The neighbor is stunned for a moment.', 2000);
+    if (nid === this.mp.myId) this.stunSelf();
+    else this.mp.net.to(nid, { k: 'stun' });
+  }
+
+  /** Versus: you (the neighbor) got hit by something. */
+  stunSelf() {
+    this.stunned = 2.2;
+    this.player.keys.clear();
+    this.toast('Ouch! Stunned!', 1500);
   }
 
   caught() {
@@ -902,12 +1232,17 @@ class Game {
     }
     this.pullFrom = p.ch.pos.clone();
     this.shakeSeed = Math.random() * 100;
+    // Keys and the crowbar go back where they came from.
     const held = this.player.held;
     if (held) {
-      this.release(held, true);
-      if (held.important) {
-        held.resetHome();
-        if (held.container) held.container.item = held;
+      const { pos } = this.releasePose(true);
+      if (!this.online || this.mp.isHost) {
+        this.freeItem(p, held, pos, new THREE.Vector3(), false, true);
+      } else {
+        this.mp.sendAct({ a: 'rel', i: held.idx, p: pos.toArray(), v: [0, 0, 0], home: true });
+        this.mp.released.set(held.idx, this.time);
+        this.dropVisual(held);
+        held.held = false;
       }
     }
   }
@@ -959,19 +1294,20 @@ class Game {
     if (t > 1.45) $('caughtText').classList.remove('hidden');
     if (t > 3.2) {
       $('caughtText').classList.add('hidden');
-      p.spawn(SPAWN, 0);
-      n.reset();
-      for (const d of this.world.doors) {
-        if (d.id === 'front') d.setOpen(false);
+      p.spawn(this.spawnPoint(), 0);
+      // (He resets himself: see Neighbor.startGrab.)
+      if (!this.online) {
+        for (const d of this.world.doors) {
+          if (d.id === 'front') d.setOpen(false);
+        }
+        for (const h of this.world.hideSpots) h.target = 0;
       }
-      for (const h of this.world.hideSpots) {
-        h.target = 0;
-        h.setVisible(true);
-      }
+      for (const h of this.world.hideSpots) h.setVisible(true);
       this.pulledFrom = null;
       this.state = 'playing';
       this.fadeOut = 1;
-      if (this.catches === 1) this.toast('You woke up back home. Try again, quieter this time.');
+      if (this.online) this.toast(this.mp.mode === 'versus' ? `Caught! The neighbor has ${this.mp.catches} / ${this.mp.catchTarget}.` : 'You woke up back home. Get back in there!');
+      else if (this.catches === 1) this.toast('You woke up back home. Try again, quieter this time.');
       else if (this.catches === 3) this.toast('Tip: crouching (C) is silent, and wardrobes are good hiding places.', 5000);
       else this.toast('Caught again...');
     }
@@ -980,13 +1316,41 @@ class Game {
   checkEnding() {
     const p = this.player.pos;
     const b = this.world.basement;
-    if (p.y < -2.3 && p.z > b.z0 + 0.3 && p.x > b.x0 && p.x < b.x1) {
+    if (this.role === 'kid' && p.y < -2.3 && p.z > b.z0 + 0.3 && p.x > b.x0 && p.x < b.x1) {
+      if (this.online) {
+        // The host tells everyone.
+        if (!this.endSent) this.request({ a: 'end' });
+        this.endSent = true;
+        return;
+      }
       this.state = 'ending';
       this.endT = 0;
       this.player.keys.clear();
       this.sound.setChase(false);
       this.sound.drone(7);
     }
+  }
+
+  /** Multiplayer game over (`who` won: 'kids' or 'neighbor'). */
+  mpEnd(who, text) {
+    if (this.state === 'ending' || this.state === 'won') return;
+    if (this.hideAnim || this.player.hidden) {
+      const spot = this.player.hidden || this.hideAnim.spot;
+      spot.setVisible(true);
+      this.player.hidden = null;
+      this.hideAnim = null;
+      $('hideOverlay').classList.add('hidden');
+    }
+    $('caughtText').classList.add('hidden');
+    this.menuOpen = false;
+    $('pause').classList.add('hidden');
+    this.state = 'ending';
+    this.endT = 0;
+    this.endInfo = { who, text };
+    this.player.keys.clear();
+    this.sound.setChase(false);
+    this.sound.drone(7);
+    this.toast(text, 5000);
   }
 
   updateEnding(dt) {
@@ -1003,6 +1367,12 @@ class Game {
       const mm = Math.floor(secs / 60);
       const ss = String(secs % 60).padStart(2, '0');
       $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${mm}:${ss}</b><br />Times caught: <b>${this.catches}</b>`;
+      if (this.endInfo) {
+        const lostIt = (this.endInfo.who === 'kids') === (this.role === 'neighbor');
+        $('endTitle').innerHTML = this.endInfo.who === 'kids' ? 'TO BE<br />CONTINUED...' : 'GAME<br />OVER';
+        $('endBlurb').textContent = `${this.endInfo.text} ${this.mp.mode === 'versus' ? (lostIt ? 'You lose!' : 'You win!') : ''}`;
+        $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${mm}:${ss}</b><br />Kids caught: <b>${this.mp.catches}</b>`;
+      }
       $('hud').classList.add('hidden');
       $('end').classList.remove('hidden');
       this.state = 'won';
@@ -1010,6 +1380,7 @@ class Game {
   }
 
   updateHUD() {
+    if (this.online) this.updateMpStatus();
     // Only touch the DOM when something visibly changed (avoids per-frame layout work).
     const n = this.neighbor;
     const chase = n.state === 'chase';
@@ -1024,8 +1395,42 @@ class Game {
     $('eyeFill').style.width = `${fill}%`;
   }
 
+  updateMpStatus() {
+    const mp = this.mp;
+    let text;
+    if (mp.mode === 'versus') {
+      text = this.role === 'neighbor'
+        ? `You're the NEIGHBOR · caught ${mp.catches} / ${mp.catchTarget} · Click: grab · E: search wardrobes`
+        : `Kids caught: ${mp.catches} / ${mp.catchTarget} · get into the basement!`;
+      if (this.stunned > 0) text = 'STUNNED!';
+    } else {
+      text = `Co-op · ${mp.roster.size} player${mp.roster.size === 1 ? '' : 's'} · room ${mp.net.code}`;
+    }
+    if (text !== this.mpStatusText) {
+      this.mpStatusText = text;
+      $('mpStatus').textContent = text;
+    }
+  }
+
+  /** Everyone the AI neighbor could notice right now. */
+  aiPlayers() {
+    const list = [];
+    const ghost = this.debug && this.debug.view === 'free';
+    if (this.state === 'playing' && !ghost && this.role === 'kid') list.push(this.player);
+    if (this.online) {
+      for (const peer of this.mp.peers.values()) if (peer.role === 'kid' && peer.seenState && !peer.caughtAnim) list.push(peer);
+    }
+    return list;
+  }
+
+  /** Whether this machine runs the neighbor's AI. */
+  aiActive() {
+    if (this.online) return this.mp.isHost && this.mp.mode === 'coop' && this.state !== 'ending' && this.state !== 'won';
+    return this.state === 'playing' || this.state === 'caught';
+  }
+
   // ================================================================ loop
-  frame() {
+  frame(hidden = false) {
     const now = performance.now();
     const dt = Math.min(0.05, (now - this.lastTime) / 1000);
     this.lastTime = now;
@@ -1039,53 +1444,75 @@ class Game {
       this.camera.lookAt(0, 4, -16);
       this.world.update(dt, this.camera.position);
       this.neighbor.update(dt, p, this);
-    } else if (this.state === 'playing') {
-      this.playTime += dt;
-      if (this.altView()) {
-        // Your body stays put while a debug camera is active.
-      } else if (this.hideAnim) {
-        this.updateHideAnim(dt);
-      } else if (p.hidden) {
-        // Peeking out of a wardrobe: look around a little, no moving.
-        let d = p.yaw - p.hidden.yaw;
-        d = Math.atan2(Math.sin(d), Math.cos(d));
-        p.yaw = p.hidden.yaw + THREE.MathUtils.clamp(d, -1.1, 1.1);
-        p.pitch = THREE.MathUtils.clamp(p.pitch, -0.6, 0.5);
-        p.syncCamera(dt);
+    } else if (this.state === 'playing' || this.state === 'caught' || this.state === 'ending') {
+      const playing = this.state === 'playing';
+      if (playing) {
+        this.playTime += dt;
+        this.stunned = Math.max(0, this.stunned - dt);
+        if (this.altView()) {
+          // Your body stays put while a debug camera is active.
+        } else if (this.hideAnim) {
+          this.updateHideAnim(dt);
+        } else if (p.hidden) {
+          // Peeking out of a wardrobe: look around a little, no moving.
+          let d = p.yaw - p.hidden.yaw;
+          d = Math.atan2(Math.sin(d), Math.cos(d));
+          p.yaw = p.hidden.yaw + THREE.MathUtils.clamp(d, -1.1, 1.1);
+          p.pitch = THREE.MathUtils.clamp(p.pitch, -0.6, 0.5);
+          p.syncCamera(dt);
+        } else if (this.stunned > 0) {
+          // Seeing stars.
+          p.ch.vel.set(0, p.ch.vel.y, 0);
+          this.physics.moveCharacter(p.ch, dt);
+          p.roll = Math.sin(this.time * 9) * 0.08 * Math.min(1, this.stunned);
+          p.syncCamera(dt);
+        } else {
+          if (p.roll && !p.hidden) p.roll = 0;
+          p.update(dt, (pos, r) => this.emitNoise(pos, r));
+        }
+      }
+      this.world.update(dt, this.camera.position);
+      // Online, the world keeps going for everyone else while you're caught.
+      if (playing || this.online) {
+        const authority = !this.online || this.mp.isHost;
+        if (authority) {
+          this.updateItems(dt);
+          this.updateAppliances(dt);
+        }
+        // Things stashed in cupboards only show up once the door is open.
+        for (const it of this.world.items) {
+          if (it.container && !it.held) it.mesh.visible = it.container.t > 0.25;
+        }
+        for (const nz of this.noises) {
+          if (!authority) {
+            if (this.mp.mode === 'coop') this.mp.sendAct({ a: 'noise', p: nz.pos.toArray().map((v) => Math.round(v * 100) / 100), r: nz.radius });
+            continue;
+          }
+          const heard = nz.pos.distanceTo(this.neighbor.pos) < nz.radius;
+          if (heard && this.aiActive()) this.neighbor.hear(nz.pos, this, nz.radius);
+          if (this.debug) this.debug.noise(nz.pos, nz.radius, heard);
+        }
+        this.noises.length = 0;
+      }
+      if (this.aiActive()) this.neighbor.update(dt, this.aiPlayers(), this);
+      if (this.online) this.mp.update(dt);
+      if (playing) {
+        if (!this.online && this.neighbor.state !== 'chase') this.sound.setChase(false);
+        if (this.online && this.mp.isHost && this.mp.mode === 'coop') this.sound.setChase(this.neighbor.state === 'chase');
+        this.target = this.altView() ? null : this.findTarget();
+        this.updatePrompt();
+        this.updateHUD();
+        this.checkEnding();
+        if (p.pos.y < -20) p.spawn(this.spawnPoint(), 0);
+        if (this.fadeOut > 0) {
+          this.fadeOut = Math.max(0, this.fadeOut - dt * 1.5);
+          $('fade').style.opacity = String(this.fadeOut);
+        }
+      } else if (this.state === 'caught') {
+        this.updateCaught(dt);
       } else {
-        p.update(dt, (pos, r) => this.emitNoise(pos, r));
+        this.updateEnding(dt);
       }
-      this.world.update(dt, this.camera.position);
-      this.updateItems(dt);
-      this.updateAppliances(dt);
-      // Things stashed in cupboards only show up once the door is open.
-      for (const it of this.world.items) {
-        if (it.container) it.mesh.visible = it.container.t > 0.25;
-      }
-      for (const nz of this.noises) {
-        const heard = nz.pos.distanceTo(this.neighbor.pos) < nz.radius;
-        if (heard) this.neighbor.hear(nz.pos, this, nz.radius);
-        if (this.debug) this.debug.noise(nz.pos, nz.radius, heard);
-      }
-      this.noises.length = 0;
-      this.neighbor.update(dt, p, this);
-      if (this.neighbor.state !== 'chase') this.sound.setChase(false);
-      this.target = this.altView() ? null : this.findTarget();
-      this.updatePrompt();
-      this.updateHUD();
-      this.checkEnding();
-      if (p.pos.y < -20) p.spawn(SPAWN, 0);
-      if (this.fadeOut > 0) {
-        this.fadeOut = Math.max(0, this.fadeOut - dt * 1.5);
-        $('fade').style.opacity = String(this.fadeOut);
-      }
-    } else if (this.state === 'caught') {
-      this.world.update(dt, this.camera.position);
-      this.neighbor.update(dt, p, this);
-      this.updateCaught(dt);
-    } else if (this.state === 'ending') {
-      this.world.update(dt, this.camera.position);
-      this.updateEnding(dt);
     }
 
     if (this.debug && this.state !== 'menu') this.debug.update(dt);
@@ -1095,6 +1522,7 @@ class Game {
     if (this.state === 'playing') this.sound.ambience(dt, p.pos.y < 0.2 && p.pos.y > -0.5);
     this.updateShards(dt);
     this.sky.position.copy(this.camera.position);
+    if (hidden) return;
     // Nothing moves while paused or on the end screen: draw one frame, then idle the GPU.
     if (this.state === 'paused' || this.state === 'won') {
       if (this.stillFrame) return;

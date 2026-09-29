@@ -120,6 +120,14 @@ export class Sound {
     this.noise(node, { dur: 0.09, type: 'lowpass', freq: surfaceHard ? 1800 : 900, gain: 1 });
   }
 
+  /** Someone else's footstep (other players in multiplayer). */
+  stepAt(pos, loud = false) {
+    if (!this.ok()) return;
+    const { node, gain } = this.out(pos, loud ? 0.6 : 0.35, loud ? 22 : 14);
+    if (gain < 0.001) return;
+    this.noise(node, { dur: 0.09, type: 'lowpass', freq: 1200, gain: 1 });
+  }
+
   heavyStep(pos) {
     if (!this.ok()) return;
     const { node, gain } = this.out(pos, 1.3, 30);
