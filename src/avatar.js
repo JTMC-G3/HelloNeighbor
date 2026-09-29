@@ -66,11 +66,9 @@ function buildKid(color) {
   return { root, body, legs, arms, torso, head, hand };
 }
 
-function nameTag(text, color) {
-  const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 64;
+function drawTag(c, text, color) {
   const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
   ctx.font = 'bold 30px Trebuchet MS, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -81,10 +79,21 @@ function nameTag(text, color) {
   ctx.fill();
   ctx.fillStyle = color;
   ctx.fillText(text, 128, 33, 240);
+}
+
+function nameTag(text, color) {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 64;
+  drawTag(c, text, color);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
   s.scale.set(0.8, 0.2, 1);
+  s.userData.setText = (t) => {
+    drawTag(c, t, color);
+    tex.needsUpdate = true;
+  };
   return s;
 }
 
@@ -243,9 +252,14 @@ export class Peer {
 
 /**
  * Versus: what the neighbor player heard. A see-through silhouette where a kid
- * was heard (drawn over walls, fading out), or a ring for other noises
- * (things landing, glass, a TV left on).
+ * was last heard (drawn over walls; it stays until you hear that kid again or
+ * catch them), or a pulsing ring and light beam for other noises (things
+ * landing, glass, a TV left on). Anything behind you or off-screen gets an
+ * arrow at the edge of the screen.
  */
+const RING_LIFE = 8;
+const RING_COLOR = '#ffd23f';
+
 export class HeardMarks {
   constructor(game) {
     this.game = game;
@@ -253,8 +267,15 @@ export class HeardMarks {
     this.rings = [];
     this.group = new THREE.Group();
     game.scene.add(this.group);
-    this.ringGeo = new THREE.RingGeometry(0.85, 1, 40);
+    this.ringGeo = new THREE.RingGeometry(0.7, 1, 40);
     this.ringGeo.rotateX(-Math.PI / 2);
+    this.beamGeo = new THREE.CylinderGeometry(0.07, 0.07, 7, 8, 1, true);
+    this.beamGeo.translate(0, 3.5, 0);
+    this.canvas = document.getElementById('heardCanvas');
+    this.ctx = this.canvas.getContext('2d');
+    this.canvas.classList.remove('hidden');
+    this.v = new THREE.Vector3();
+    this.drawn = false;
   }
 
   overlay(color, opacity) {
@@ -266,20 +287,22 @@ export class HeardMarks {
     if (m) return m;
     const info = this.game.mp.roster.get(id);
     const color = info ? info.color : '#ffcc00';
-    const mat = this.overlay(color, 0.6);
+    const mat = this.overlay(color, 0.75);
     const root = new THREE.Group();
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 1.1, 12), mat);
     body.position.y = 0.72;
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), mat);
     head.position.y = 1.47;
-    root.add(body, head);
-    const tag = nameTag(`${info ? info.name : 'Someone'}?`, color);
+    const beam = new THREE.Mesh(this.beamGeo, this.overlay(color, 0.3));
+    root.add(body, head, beam);
+    const name = info ? info.name : 'Someone';
+    const tag = nameTag(`${name}?`, color);
     tag.material.depthTest = false;
     tag.position.y = 1.95;
     root.add(tag);
     root.traverse((o) => { o.renderOrder = 990; });
     this.group.add(root);
-    m = { root, mat, tag, t: 0, life: 4.5 };
+    m = { id, root, mat, tag, name, color, t: 0, shown: -1 };
     this.kids.set(id, m);
     return m;
   }
@@ -291,43 +314,128 @@ export class HeardMarks {
       m.root.position.set(msg.at[0], msg.at[1], msg.at[2]);
       m.root.visible = true;
       m.t = 0;
+      m.shown = -1;
       return;
     }
     if (!Array.isArray(msg.p)) return;
-    const ring = this.rings.find((r) => !r.mesh.visible) || this.addRing();
-    ring.mesh.position.set(msg.p[0], msg.p[1] + 0.05, msg.p[2]);
-    ring.mesh.visible = true;
+    const ring = this.rings.find((r) => !r.root.visible) || this.addRing();
+    ring.root.position.set(msg.p[0], msg.p[1] + 0.05, msg.p[2]);
+    ring.root.visible = true;
     ring.t = 0;
   }
 
   addRing() {
-    const mesh = new THREE.Mesh(this.ringGeo, this.overlay(0xffb347, 0.7));
-    mesh.renderOrder = 989;
-    this.group.add(mesh);
-    const ring = { mesh, t: 0 };
+    const root = new THREE.Group();
+    const mat = this.overlay(RING_COLOR, 1);
+    const mesh = new THREE.Mesh(this.ringGeo, mat);
+    const inner = new THREE.Mesh(this.ringGeo, mat);
+    const beamMat = this.overlay(RING_COLOR, 0.45);
+    const beam = new THREE.Mesh(this.beamGeo, beamMat);
+    root.add(mesh, inner, beam);
+    root.traverse((o) => { o.renderOrder = 989; });
+    this.group.add(root);
+    const ring = { root, mesh, inner, mat, beamMat, t: 0 };
     this.rings.push(ring);
     return ring;
   }
 
   update(dt) {
+    const peers = this.game.mp.peers;
     for (const m of this.kids.values()) {
       if (!m.root.visible) continue;
-      m.t += dt;
-      const k = 1 - m.t / m.life;
-      if (k <= 0) {
+      // Gone for good once they're caught (they wake up back on the street) or leave.
+      const peer = peers.get(m.id);
+      if (!peer || peer.caughtAnim) {
         m.root.visible = false;
         continue;
       }
-      // Pulses a little, then fades.
-      m.mat.opacity = 0.6 * k * (0.8 + 0.2 * Math.sin(m.t * 8));
-      m.tag.material.opacity = Math.min(1, k * 1.5);
+      m.t += dt;
+      m.mat.opacity = 0.75 + 0.2 * Math.sin(m.t * 5);
+      const secs = Math.floor(m.t);
+      if (secs !== m.shown) {
+        m.shown = secs;
+        m.tag.userData.setText(secs < 1 ? `${m.name}?` : `${m.name}? · ${secs}s`);
+      }
     }
     for (const r of this.rings) {
-      if (!r.mesh.visible) continue;
+      if (!r.root.visible) continue;
       r.t += dt;
-      r.mesh.scale.setScalar(0.4 + r.t * 1.4);
-      r.mesh.material.opacity = 0.7 * Math.max(0, 1 - r.t / 2.5);
-      if (r.t > 2.5) r.mesh.visible = false;
+      if (r.t > RING_LIFE) {
+        r.root.visible = false;
+        continue;
+      }
+      // Two rings rippling outwards, over and over; everything fades in the last second.
+      const fade = Math.min(1, RING_LIFE - r.t);
+      const a = (r.t % 1.2) / 1.2;
+      const b = ((r.t + 0.6) % 1.2) / 1.2;
+      r.mesh.scale.setScalar(0.3 + a * 1.9);
+      r.inner.scale.setScalar(0.3 + b * 1.9);
+      r.mat.opacity = fade * 0.95;
+      r.beamMat.opacity = fade * (0.35 + 0.15 * Math.sin(r.t * 6));
+    }
+    this.drawArrows();
+  }
+
+  /** Arrows at the edge of the screen for anything behind you or off to the side. */
+  drawArrows() {
+    const c = this.canvas;
+    if (c.width !== window.innerWidth || c.height !== window.innerHeight) {
+      c.width = window.innerWidth;
+      c.height = window.innerHeight;
+    }
+    const ctx = this.ctx;
+    const W = c.width;
+    const H = c.height;
+    if (this.drawn) ctx.clearRect(0, 0, W, H);
+    this.drawn = false;
+    const cam = this.game.camera;
+    const marks = [];
+    for (const m of this.kids.values()) if (m.root.visible) marks.push({ pos: m.root.position, y: 1.2, color: m.color, label: m.name });
+    for (const r of this.rings) if (r.root.visible) marks.push({ pos: r.root.position, y: 0.5, color: RING_COLOR, label: '' });
+    if (!marks.length) return;
+    const margin = 36;
+    for (const mk of marks) {
+      const v = this.v.set(mk.pos.x, mk.pos.y + mk.y, mk.pos.z).project(cam);
+      const behind = v.z > 1;
+      const onScreen = !behind && Math.abs(v.x) < 0.92 && Math.abs(v.y) < 0.9;
+      if (onScreen) continue;
+      // Direction on screen (flipped if it's behind you), pushed out to the edge.
+      let x = behind ? -v.x : v.x;
+      let y = behind ? -v.y : v.y;
+      if (behind && Math.abs(x) < 0.01 && Math.abs(y) < 0.01) y = -1;
+      const k = 1 / Math.max(Math.abs(x) / 0.9, Math.abs(y) / 0.85, 1e-6);
+      x *= k;
+      y *= k;
+      const sx = THREE.MathUtils.clamp((x * 0.5 + 0.5) * W, margin, W - margin);
+      const sy = THREE.MathUtils.clamp((-y * 0.5 + 0.5) * H, margin, H - margin);
+      const ang = Math.atan2(sy - H / 2, sx - W / 2);
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(ang);
+      ctx.fillStyle = mk.color;
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(16, 0);
+      ctx.lineTo(-10, -12);
+      ctx.lineTo(-4, 0);
+      ctx.lineTo(-10, 12);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      ctx.restore();
+      if (mk.label) {
+        ctx.font = 'bold 13px Trebuchet MS, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = mk.color;
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        ctx.lineWidth = 3;
+        const lx = sx - Math.cos(ang) * 30;
+        const ly = sy - Math.sin(ang) * 30 + 4;
+        ctx.strokeText(mk.label, lx, ly);
+        ctx.fillText(mk.label, lx, ly);
+      }
+      this.drawn = true;
     }
   }
 }

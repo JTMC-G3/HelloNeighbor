@@ -148,8 +148,10 @@ seconds.
 You hear the kids by the same rules as the AI neighbor: walking and crouching are silent,
 but running, landing from a jump, and doors, cupboards and pried-off boards near you give
 them away (only on your property). When you hear a kid, a see-through silhouette in their
-colour appears where they were, visible through walls, and fades after a few seconds.
-Other noises (something thrown landing, breaking glass, a TV left on) show a ring instead.
+colour marks where they were, visible through walls, with a timer ("Bea? · 12s"). It stays
+until you hear that kid again (it moves) or catch them. Other noises (something thrown
+landing, breaking glass, a TV left on) show a bright pulsing ring with a light beam for 8
+seconds. Anything behind you or off-screen gets an arrow at the edge of your screen.
 
 Notes:
 
