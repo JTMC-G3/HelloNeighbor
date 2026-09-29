@@ -42,6 +42,22 @@ npm run dev
 
 Then open <http://localhost:5173>.
 
+### Sharing it with a Cloudflare tunnel
+
+To let friends play what's running on your machine, build the fast production version and
+tunnel it:
+
+```bash
+npm run share                                    # builds, then serves on port 4173
+cloudflared tunnel --url http://localhost:4173   # in a second terminal
+```
+
+Send people the `https://….trycloudflare.com` link it prints. Tunnelling the dev server
+(`npm run dev` + `--url http://localhost:5173`) also works, but it's slower to load and live
+reload doesn't work through the tunnel. Any `*.trycloudflare.com` address is already
+allowed. For other tunnel services, add their hostname, e.g.
+`ALLOWED_HOSTS=.ngrok-free.app npm run share`.
+
 ### Option 3: GitHub Pages
 
 The repo includes a workflow (`.github/workflows/pages.yml`) that builds the game and
