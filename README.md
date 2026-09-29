@@ -140,7 +140,7 @@ the Cloudflare tunnel above (`npm run share` + `cloudflared`), then open the
 What's different in VR:
 
 * **Physical play:** throw things for real, peek around corners, and duck behind counters.
-  Crouching in your room makes you quieter and harder to see, because he checks where your
+  Crouching in your room makes you harder to see, because he checks where your
   head actually is.
 * **Room-scale walking** is supported, but walls still stop you. You can't lean your head
   through a wall to peek.
