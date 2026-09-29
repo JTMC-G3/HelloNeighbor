@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { CHORES } from './chores.js';
 
 /*
- * Debug mode (enabled from the title screen). Shows what the neighbor is
- * thinking and lets you watch him:
+ * Debug mode (enabled from the title screen, or toggled mid-game with `).
+ * Shows what the neighbor is thinking and lets you watch him:
  *   - chams (see-through highlight) + ESP box/label, coloured by his mode
  *   - his vision cone, planned path, line of sight to you, and noise rings
  *   - an info panel (top left)
@@ -168,6 +168,20 @@ export class Debug {
     }
     this.graph.visible = false;
     this.group.add(this.graph);
+  }
+
+  /** Turn the whole overlay on or off (the ` key mid-game). */
+  setEnabled(on) {
+    if (!on) {
+      this.setView('player');
+      if (this.frozen) this.frozen = false;
+    }
+    this.group.visible = on;
+    for (const c of this.chams) c.visible = on;
+    this.panel.classList.toggle('hidden', !on || !this.panelOn);
+    this.canvas.classList.toggle('hidden', !on);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.panelTimer = 0;
   }
 
   resize() {
@@ -515,7 +529,7 @@ export class Debug {
       `<div class="dbg-sec">RENDER</div>`,
       row('FPS', `${this.fps.value} · ${g.preset.label} · ${Math.round(g.scale * 100)}% res`),
       row('Draw calls', `${info.calls} · ${(info.triangles / 1000).toFixed(0)}k tris`),
-      `<div class="dbg-keys">V neighbor's view · B free cam · N waypoints · L keys · K freeze · H hide panel</div>`,
+      `<div class="dbg-keys">\` debug off · V neighbor's view · B free cam · N waypoints · L keys · K freeze · H hide panel</div>`,
     ].join('');
   }
 }

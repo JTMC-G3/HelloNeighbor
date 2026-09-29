@@ -84,6 +84,7 @@ hosted on any static web server. It has to be served over HTTP, not opened as a 
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
 | **Esc** / **P** | Pause (sensitivity, volume, restart) |
+| **`** | Debug mode on / off (see below) |
 
 Click the game to capture the mouse.
 
@@ -118,7 +119,8 @@ a fresh one.
 
 ## 🐞 Debug mode
 
-Tick **Debug mode** on the title screen before pressing Play (it's remembered). You get:
+Tick **Debug mode** on the title screen before pressing Play (it's remembered), or press
+**`** (the backtick key, left of 1) at any point mid-game to switch it on or off. You get:
 
 * **Chams / ESP** on the neighbor: he's highlighted through walls, with a box, distance and
   label, coloured by his mode (green idle, yellow suspicious, red attacking, purple stunned).
@@ -132,6 +134,7 @@ Tick **Debug mode** on the title screen before pressing Play (it's remembered). 
 
 | Key | Debug action |
 | --- | --- |
+| **`** | Turn debug mode on / off mid-game |
 | **V** | See through the neighbor's eyes |
 | **B** | Free camera: fly with WASD, Space/C up/down, Shift for speed. Passes through walls, and he ignores you completely |
 | **T** | (in free camera) Teleport your body to the camera |
