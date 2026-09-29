@@ -25,7 +25,7 @@ const FULL_EVERY = 2;
 const STATES = ['patrol', 'task', 'investigate', 'chase', 'stunned', 'openCloset'];
 // World sounds everyone should hear (positional ones mostly).
 const SHARED_SOUNDS = new Set(['door', 'pry', 'thud', 'appliance', 'chore', 'grunt', 'alert']);
-const CATCHES_PER_KID = 3;
+const CATCHES_PER_KID = 8;
 const $ = (id) => document.getElementById(id);
 const r2 = (v) => Math.round(v * 100) / 100;
 const cleanName = (s) => String(s || '').replace(/[^\p{L}\p{N} _.'-]/gu, '').trim().slice(0, 16) || 'Player';
