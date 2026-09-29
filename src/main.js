@@ -451,6 +451,7 @@ class Game {
       this.neighbor.model.root.visible = false;
       this.toast('You are the NEIGHBOR. Keep those kids out of your basement!', 4500);
       this.toast('Click: grab a kid · E on a wardrobe: search it', 6000);
+      this.toast("You've got every key. When you hear a kid, you'll see where they were.", 7000);
     } else {
       this.player.spawn(this.spawnPoint(), 0);
       this.toast(versus ? 'One of your friends is the neighbor. Get into his basement!' : "There's something strange going on across the street...", 4000);
@@ -510,8 +511,9 @@ class Game {
     return p.x > y.x0 - 0.1 && p.x < y.x1 + 0.1 && p.z < y.z1 + 0.1 && p.z > y.z0 - 0.2;
   }
 
-  emitNoise(pos, radius) {
-    this.noises.push({ pos: pos.clone(), radius });
+  /** A noise the neighbor might hear. `by`: the player who made it, if any. */
+  emitNoise(pos, radius, by = null) {
+    this.noises.push({ pos: pos.clone(), radius, by });
   }
 
   /** A message for one player (the local one, or sent to a remote one). */
@@ -590,6 +592,7 @@ class Game {
       const d = t.door;
       const lock = this.usableLock(d);
       if (lock) html = lock.type === 'key' ? `<kbd>E</kbd> Use ${this.player.held.name}` : '<kbd>E</kbd> Pry the boards off';
+      else if (d.locked && !d.open && this.hasKeys(this.player, d)) html = `<kbd>E</kbd> Unlock ${d.name} <span style="color:#9be7a0">(your keys)</span>`;
       else if (d.locked && !d.open) html = `<kbd>E</kbd> ${d.name} <span style="color:#ff8a80">(${d.boarded ? 'boarded up' : 'locked'})</span>`;
       else html = `<kbd>E</kbd> ${d.open ? 'Close' : 'Open'} ${d.name}`;
     } else if (t && t.container) {
@@ -604,6 +607,11 @@ class Game {
       el.innerHTML = html;
       $('crosshair').classList.toggle('active', !!t);
     }
+  }
+
+  /** Playing as the neighbor: it's your house, you have every key (boards still stop you). */
+  hasKeys(actor, d) {
+    return actor.role === 'neighbor' && !d.boarded;
   }
 
   /** The lock on door `d` that the held item can remove, if any. */
@@ -654,7 +662,7 @@ class Game {
       return;
     }
     const d = t.door;
-    if (d.locked && !d.open) {
+    if (d.locked && !d.open && !this.hasKeys(this.player, d)) {
       if (this.usableLock(d)) {
         this.request({ a: 'lock', i: d.idx });
       } else {
@@ -699,7 +707,7 @@ class Game {
         if (!c) return;
         c.open = !c.open;
         this.sfx.door(c.panel.getWorldPosition(new THREE.Vector3()), c.open);
-        this.emitNoise(actor.pos, 2.5);
+        this.emitNoise(actor.pos, 2.5, actor);
         break;
       }
       case 'app': {
@@ -709,11 +717,11 @@ class Game {
       }
       case 'door': {
         const d = w.doors[i];
-        if (!d || (d.locked && !d.open)) return;
+        if (!d || (d.locked && !d.open && !this.hasKeys(actor, d))) return;
         d.setOpen(!d.open);
         this.sfx.door(d.center, d.open);
         // Doors creak: the neighbor may hear it if he's close.
-        this.emitNoise(d.center, 3.5);
+        this.emitNoise(d.center, 3.5, actor);
         this.neighbor.openedDoors.delete(d);
         break;
       }
@@ -733,7 +741,7 @@ class Game {
         break;
       }
       case 'noise':
-        if (Array.isArray(act.p)) this.emitNoise(V3(act.p), Math.min(30, Number(act.r) || 0));
+        if (Array.isArray(act.p)) this.emitNoise(V3(act.p), Math.min(30, Number(act.r) || 0), actor);
         break;
       case 'search':
         this.searchWardrobe(actor, w.hideSpots[i]);
@@ -764,7 +772,7 @@ class Game {
       else this.sound.unlock();
     } else {
       this.sfx.pry(d.center);
-      this.emitNoise(d.center, 8);
+      this.emitNoise(d.center, 8, actor);
     }
     if (!d.locked) {
       d.setOpen(true);
@@ -1091,7 +1099,8 @@ class Game {
     win.hide();
     win.collider.enabled = false;
     this.sound.glass(win.center);
-    this.emitNoise(win.center, 30);
+    // (On other players' screens this is just the effect: the host hears it.)
+    if (!this.online || this.mp.isHost) this.emitNoise(win.center, 30);
     for (let i = 0; i < 22; i++) {
       const m = new THREE.Mesh(this.shardGeo, this.shardMat);
       const along = (Math.random() - 0.5) * win.w;
@@ -1468,7 +1477,7 @@ class Game {
           p.syncCamera(dt);
         } else {
           if (p.roll && !p.hidden) p.roll = 0;
-          p.update(dt, (pos, r) => this.emitNoise(pos, r));
+          p.update(dt, (pos, r) => this.emitNoise(pos, r, p));
         }
       }
       this.world.update(dt, this.camera.position);
@@ -1485,7 +1494,11 @@ class Game {
         }
         for (const nz of this.noises) {
           if (!authority) {
-            if (this.mp.mode === 'coop') this.mp.sendAct({ a: 'noise', p: nz.pos.toArray().map((v) => Math.round(v * 100) / 100), r: nz.radius });
+            if (this.role === 'kid') this.mp.sendAct({ a: 'noise', p: nz.pos.toArray().map((v) => Math.round(v * 100) / 100), r: nz.radius });
+            continue;
+          }
+          if (this.online && this.mp.mode === 'versus') {
+            this.mp.neighborHears(nz);
             continue;
           }
           const heard = nz.pos.distanceTo(this.neighbor.pos) < nz.radius;

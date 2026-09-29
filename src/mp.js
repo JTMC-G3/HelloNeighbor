@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Net } from './net.js';
-import { Peer, PLAYER_COLORS, F } from './avatar.js';
+import { Peer, PLAYER_COLORS, F, HeardMarks } from './avatar.js';
 
 /*
  * Multiplayer.
@@ -408,6 +408,9 @@ export class Multiplayer {
       case 'stun':
         g.stunSelf();
         break;
+      case 'heard':
+        this.showHeard(d);
+        break;
       case 'end':
         g.mpEnd(d.who, d.text);
         break;
@@ -519,6 +522,33 @@ export class Multiplayer {
     }
   }
 
+  /**
+   * Host, versus: the neighbor player hears noises by the same rules as the AI
+   * neighbor (loud enough to reach him, and on his property). Kids' own noises
+   * (running, landing, doors, cupboards...) show where the kid was.
+   */
+  neighborHears(nz) {
+    const nid = this.neighborId;
+    if (nid < 0 || (nz.by && nz.by.role === 'neighbor')) return;
+    const g = this.game;
+    if (!g.onProperty(nz.pos) || nz.pos.distanceTo(g.neighbor.pos) >= nz.radius) return;
+    const kid = nz.by && nz.by.role === 'kid' ? nz.by : null;
+    const msg = {
+      k: 'heard',
+      p: [r2(nz.pos.x), r2(nz.pos.y), r2(nz.pos.z)],
+      r: nz.radius,
+      id: kid ? kid.id : -1,
+      at: kid ? [r2(kid.pos.x), r2(kid.pos.y), r2(kid.pos.z)] : null,
+    };
+    if (nid === this.myId) this.showHeard(msg);
+    else this.net.to(nid, msg);
+  }
+
+  showHeard(msg) {
+    if (!this.heard) this.heard = new HeardMarks(this.game);
+    this.heard.show(msg);
+  }
+
   /** Host: game over for everyone. */
   finish(who, actor, text) {
     if (!this.isHost || this.game.state === 'ending' || this.game.state === 'won') return;
@@ -533,6 +563,7 @@ export class Multiplayer {
     if (!this.started) return;
     const g = this.game;
     for (const peer of this.peers.values()) peer.update(dt);
+    if (this.heard) this.heard.update(dt);
     if (this.mode === 'versus') this.updateVersusNeighbor(dt);
     else if (!this.isHost) this.puppetNeighbor(dt);
     if (!this.isHost) this.smoothItems(dt);

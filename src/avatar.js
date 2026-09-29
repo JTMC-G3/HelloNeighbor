@@ -240,3 +240,94 @@ export class Peer {
     if (this.model) this.game.scene.remove(this.model.root);
   }
 }
+
+/**
+ * Versus: what the neighbor player heard. A see-through silhouette where a kid
+ * was heard (drawn over walls, fading out), or a ring for other noises
+ * (things landing, glass, a TV left on).
+ */
+export class HeardMarks {
+  constructor(game) {
+    this.game = game;
+    this.kids = new Map(); // player id -> mark
+    this.rings = [];
+    this.group = new THREE.Group();
+    game.scene.add(this.group);
+    this.ringGeo = new THREE.RingGeometry(0.85, 1, 40);
+    this.ringGeo.rotateX(-Math.PI / 2);
+  }
+
+  overlay(color, opacity) {
+    return new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false });
+  }
+
+  kidMark(id) {
+    let m = this.kids.get(id);
+    if (m) return m;
+    const info = this.game.mp.roster.get(id);
+    const color = info ? info.color : '#ffcc00';
+    const mat = this.overlay(color, 0.6);
+    const root = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 1.1, 12), mat);
+    body.position.y = 0.72;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), mat);
+    head.position.y = 1.47;
+    root.add(body, head);
+    const tag = nameTag(`${info ? info.name : 'Someone'}?`, color);
+    tag.material.depthTest = false;
+    tag.position.y = 1.95;
+    root.add(tag);
+    root.traverse((o) => { o.renderOrder = 990; });
+    this.group.add(root);
+    m = { root, mat, tag, t: 0, life: 4.5 };
+    this.kids.set(id, m);
+    return m;
+  }
+
+  /** { p: noise position, r: how far it carried, id: kid id or -1, at: where the kid was } */
+  show(msg) {
+    if (msg.id >= 0 && Array.isArray(msg.at)) {
+      const m = this.kidMark(msg.id);
+      m.root.position.set(msg.at[0], msg.at[1], msg.at[2]);
+      m.root.visible = true;
+      m.t = 0;
+      return;
+    }
+    if (!Array.isArray(msg.p)) return;
+    const ring = this.rings.find((r) => !r.mesh.visible) || this.addRing();
+    ring.mesh.position.set(msg.p[0], msg.p[1] + 0.05, msg.p[2]);
+    ring.mesh.visible = true;
+    ring.t = 0;
+  }
+
+  addRing() {
+    const mesh = new THREE.Mesh(this.ringGeo, this.overlay(0xffb347, 0.7));
+    mesh.renderOrder = 989;
+    this.group.add(mesh);
+    const ring = { mesh, t: 0 };
+    this.rings.push(ring);
+    return ring;
+  }
+
+  update(dt) {
+    for (const m of this.kids.values()) {
+      if (!m.root.visible) continue;
+      m.t += dt;
+      const k = 1 - m.t / m.life;
+      if (k <= 0) {
+        m.root.visible = false;
+        continue;
+      }
+      // Pulses a little, then fades.
+      m.mat.opacity = 0.6 * k * (0.8 + 0.2 * Math.sin(m.t * 8));
+      m.tag.material.opacity = Math.min(1, k * 1.5);
+    }
+    for (const r of this.rings) {
+      if (!r.mesh.visible) continue;
+      r.t += dt;
+      r.mesh.scale.setScalar(0.4 + r.t * 1.4);
+      r.mesh.material.opacity = 0.7 * Math.max(0, 1 - r.t / 2.5);
+      if (r.t > 2.5) r.mesh.visible = false;
+    }
+  }
+}

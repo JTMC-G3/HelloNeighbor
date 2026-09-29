@@ -141,8 +141,15 @@ Up to 8 people can play in the same house. Press **Multiplayer** on the title sc
 Playing as the neighbor: you're a bit taller and slightly faster than the kids.
 **Click** grabs a kid in front of you, **E** on a wardrobe searches it (anyone hiding inside
 is caught), and you can open doors and throw things, but you can't pick up keys or the
-crowbar. A kid who hits you with a thrown object stuns you for a couple of seconds. Listen
-for footsteps: running kids are noisy.
+crowbar. It's your house, so you can open **padlocked doors and the front door** (boarded-up
+doors still stop you). A kid who hits you with a thrown object stuns you for a couple of
+seconds.
+
+You hear the kids by the same rules as the AI neighbor: walking and crouching are silent,
+but running, landing from a jump, and doors, cupboards and pried-off boards near you give
+them away (only on your property). When you hear a kid, a see-through silhouette in their
+colour appears where they were, visible through walls, and fades after a few seconds.
+Other noises (something thrown landing, breaking glass, a TV left on) show a ring instead.
 
 Notes:
 
