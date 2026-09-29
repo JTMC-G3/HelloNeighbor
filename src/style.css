@@ -315,6 +315,11 @@ canvas {
   box-shadow: 0 1px 0 var(--accent-dark);
 }
 
+.btn.vr {
+  background: #6c4bd8;
+  box-shadow: 0 4px 0 #43308c;
+}
+
 .btn.secondary {
   background: #4a5063;
   box-shadow: 0 4px 0 #2b2f3b;

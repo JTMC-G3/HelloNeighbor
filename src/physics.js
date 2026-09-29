@@ -163,6 +163,21 @@ export class Physics {
     return false;
   }
 
+  /** Slide a character horizontally by (dx, dz), stopping at walls (VR room-scale walking). */
+  moveBy(ch, dx, dz) {
+    const dist = Math.hypot(dx, dz);
+    if (dist < 1e-5) return;
+    const n = Math.min(10, Math.ceil(dist / 0.1));
+    const m = ch.radius + dist + 0.1;
+    const cands = this.near(ch.pos.x - m, ch.pos.z - m, ch.pos.x + m, ch.pos.z + m);
+    for (let i = 0; i < n; i++) {
+      ch.pos.x += dx / n;
+      ch.pos.z += dz / n;
+      this.resolveHorizontal(ch, ch.stepHeight, cands);
+      this.resolveHorizontal(ch, ch.stepHeight, cands);
+    }
+  }
+
   moveCharacter(ch, dt) {
     const stepH = ch.stepHeight;
     const hs = Math.hypot(ch.vel.x, ch.vel.z) * dt;

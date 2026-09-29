@@ -9,6 +9,7 @@ import { Sound } from './audio.js';
 import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality, adapt } from './quality.js';
 import { randomSeed } from './rng.js';
 import { Debug } from './debug.js';
+import { VR } from './vr.js';
 
 const REACH = 2.5;
 // Things that block reaching for an item: walls, glass, closed cupboards (not doors, handled separately).
@@ -82,6 +83,10 @@ class Game {
     }));
     for (const el of document.querySelectorAll('.seedLabel')) el.textContent = `House #${this.seed}`;
     this.player.spawn(SPAWN, 0);
+    this.vr = new VR(this);
+    VR.supported().then((ok) => {
+      if (ok) $('vrBtn').classList.remove('hidden');
+    });
 
     this.raycaster = new THREE.Raycaster();
     // Only door panels are raycast as meshes; walls/glass use the (much cheaper) collision boxes.
@@ -267,7 +272,7 @@ class Game {
     } else {
       p.calm = 0;
     }
-    if (next !== this.scale) {
+    if (next !== this.scale && !this.renderer.xr.isPresenting) {
       this.scale = next;
       this.renderer.setPixelRatio(next);
       this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -346,6 +351,15 @@ class Game {
     });
 
     $('playBtn').addEventListener('click', () => this.start());
+    $('vrBtn').addEventListener('click', async () => {
+      try {
+        await this.vr.enter();
+        this.start(true);
+      } catch (err) {
+        console.error(err);
+        this.toast("Couldn't start VR. Is a headset connected?");
+      }
+    });
     $('resumeBtn').addEventListener('click', () => this.resume());
     // Same house again (keeps the seed in the URL) or a brand-new house.
     const replay = () => {
@@ -372,14 +386,14 @@ class Game {
     }
   }
 
-  start() {
+  start(inVR = false) {
     this.sound.init();
     if ($('debugChk').checked) this.debug = new Debug(this);
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     this.state = 'playing';
     this.player.spawn(SPAWN, 0);
-    this.lockPointer();
+    if (!inVR) this.lockPointer();
     this.toast("There's something strange going on across the street...");
   }
 
@@ -418,6 +432,7 @@ class Game {
   }
 
   toast(text, ms = 3200) {
+    if (this.vr && this.vr.active) this.vr.toast(text);
     const box = $('toasts');
     for (const t of box.children) if (t.textContent === text) return;
     const el = document.createElement('div');
@@ -439,9 +454,10 @@ class Game {
   }
 
   // ========================================================= interaction
-  findTarget() {
-    const eye = this.camera.position;
-    const dir = this.camera.getWorldDirection(new THREE.Vector3());
+  /** What's being aimed at: from the camera, or (in VR) along a hand's laser. */
+  findTarget(origin = null, direction = null) {
+    const eye = origin || this.camWorld();
+    const dir = direction || this.camera.getWorldDirection(new THREE.Vector3());
     this.raycaster.set(eye, dir);
     this.raycaster.far = REACH + 1;
     const hit = this.raycaster.intersectObjects(this.rayTargets, false).find((h) => h.object.visible);
@@ -464,15 +480,17 @@ class Game {
       if (score < bestScore) {
         bestScore = score;
         best = it;
+        best.aimT = t;
       }
     }
-    if (best) return { item: best };
+    if (best) return { item: best, dist: best.aimT };
     if (hitT <= REACH) {
       const u = hit.object.userData;
-      if (u.door) return { door: u.door };
-      if (u.container) return { container: u.container };
-      if (u.hide) return { hide: u.hide };
-      if (u.appliance) return { appliance: u.appliance };
+      const dist = hitT;
+      if (u.door) return { door: u.door, dist };
+      if (u.container) return { container: u.container, dist };
+      if (u.hide) return { hide: u.hide, dist };
+      if (u.appliance) return { appliance: u.appliance, dist };
     }
     return null;
   }
@@ -624,8 +642,10 @@ class Game {
       if (n.sees) a.seen = true;
       const k = ease((a.t - 0.1) / 0.4);
       p.ch.pos.lerpVectors(a.from, spot.inside, k);
-      p.yaw = turn(a.yaw0, spot.yaw, k);
-      p.pitch = THREE.MathUtils.lerp(a.pitch0, -0.05, k);
+      if (!p.vr) {
+        p.yaw = turn(a.yaw0, spot.yaw, k);
+        p.pitch = THREE.MathUtils.lerp(a.pitch0, -0.05, k);
+      }
       if (a.t > 0.45 && spot.target !== 0) {
         spot.target = 0;
         this.sound.door(spot.inside, false);
@@ -691,11 +711,9 @@ class Game {
     it.held = true;
     it.sleeping = true;
     it.vel.set(0, 0, 0);
-    this.camera.add(it.mesh);
-    const big = it.radius > 0.2;
-    it.mesh.position.set(big ? 0.28 : 0.3, big ? -0.42 : -0.26, big ? -0.75 : -0.55);
-    it.mesh.rotation.set(0.1, big ? 0.4 : -0.6, 0);
-    it.mesh.scale.setScalar(big ? 0.75 : 1);
+    if (p.vr) p.vr.attachHeld(it);
+    else this.attachHeldToCamera(it);
+    it.mesh.visible = true;
     it.mesh.traverse((o) => { o.castShadow = false; });
     if (it.container) {
       it.container.item = null;
@@ -710,16 +728,52 @@ class Game {
     $('held').innerHTML = `Holding: <b>${it.name}</b> &nbsp;·&nbsp; <kbd>Click</kbd> throw &nbsp;<kbd>Q</kbd> drop`;
   }
 
+  /** Holding position in the corner of your view (desktop). */
+  attachHeldToCamera(it) {
+    this.camera.add(it.mesh);
+    const big = it.radius > 0.2;
+    it.mesh.position.set(big ? 0.28 : 0.3, big ? -0.42 : -0.26, big ? -0.75 : -0.55);
+    it.mesh.rotation.set(0.1, big ? 0.4 : -0.6, 0);
+    it.mesh.scale.setScalar(big ? 0.75 : 1);
+  }
+
+  /** Let go of the held item at a world position with a velocity (VR hands). */
+  releaseAt(it, pos, vel) {
+    const p = this.player;
+    if (p.held !== it) return;
+    const q = it.mesh.getWorldQuaternion(new THREE.Quaternion());
+    p.held = null;
+    it.held = false;
+    this.scene.add(it.mesh);
+    it.mesh.scale.setScalar(1);
+    it.mesh.quaternion.copy(q);
+    it.mesh.traverse((o) => { o.castShadow = true; });
+    it.pos.copy(pos);
+    it.mesh.position.copy(pos);
+    it.vel.copy(vel);
+    it.sleeping = false;
+    it.sleepTimer = 0;
+    it.thrown = false;
+    $('held').innerHTML = '';
+  }
+
   /** Detach the held item from the camera into the world in front of the player. */
   release(it, gentle) {
     const p = this.player;
     if (p.held !== it) return;
+    if (p.vr && p.vr.heldHand) {
+      // In VR, "drop" means let go of it where your hand is.
+      const h = p.vr.heldHand;
+      p.vr.heldHand = null;
+      this.releaseAt(it, h.grip.getWorldPosition(new THREE.Vector3()), new THREE.Vector3());
+      return;
+    }
     p.held = null;
     it.held = false;
     this.scene.add(it.mesh);
     it.mesh.scale.setScalar(1);
     it.mesh.traverse((o) => { o.castShadow = true; });
-    const eye = this.camera.position.clone();
+    const eye = this.camWorld().clone();
     const dir = this.camera.getWorldDirection(new THREE.Vector3());
     it.pos.copy(eye).addScaledVector(dir, gentle ? 0.45 : 0.35);
     it.pos.y -= gentle ? 0.25 : 0.1;
@@ -730,6 +784,11 @@ class Game {
     it.sleepTimer = 0;
     it.thrown = false;
     $('held').innerHTML = '';
+  }
+
+  /** The camera's position in the world (in VR the camera sits inside the play-space rig). */
+  camWorld() {
+    return this.camera.getWorldPosition(this.camPos || (this.camPos = new THREE.Vector3()));
   }
 
   /** True while a debug camera (neighbor's view / free cam) has the camera. */
@@ -855,6 +914,7 @@ class Game {
   // ========================================================= game events
   onSpotted() {
     this.sound.setChase(true);
+    if (this.vr.active) this.vr.pulseBoth(0.8, 250);
     this.toast('He spotted you! RUN!', 2000);
   }
 
@@ -865,6 +925,7 @@ class Game {
     this.caughtT = 0;
     this.catches++;
     this.player.keys.clear();
+    if (this.vr.active) this.vr.pulseBoth(1, 600);
     this.sound.caught();
     this.sound.setChase(false);
     // Dragged out of a wardrobe (or grabbed mid-climb).
@@ -923,8 +984,11 @@ class Game {
     const yaw = Math.atan2(-dx, -dz);
     const pitch = Math.atan2(head.y - eye.y - p.camOffset.y, dist);
     const turnK = Math.min(1, dt * 14);
-    p.yaw += Math.atan2(Math.sin(yaw - p.yaw), Math.cos(yaw - p.yaw)) * turnK;
-    p.pitch += (pitch - p.pitch) * turnK;
+    if (!p.vr) {
+      // (In VR we never turn your head for you; you'll look at him anyway.)
+      p.yaw += Math.atan2(Math.sin(yaw - p.yaw), Math.cos(yaw - p.yaw)) * turnK;
+      p.pitch += (pitch - p.pitch) * turnK;
+    }
 
     // Lifted off your feet and shaken, then thrown down.
     const lift = THREE.MathUtils.smoothstep(t, 0.3, 0.75) * (1 - THREE.MathUtils.smoothstep(t, 1.3, 1.6));
@@ -932,7 +996,7 @@ class Game {
     const r = (k) => Math.sin(this.shakeSeed + t * (37 + k * 11)) * shakeAmt;
     p.camOffset.set((dx / dist) * 0.12 * lift + r(1), 0.4 * lift + r(2), (dz / dist) * 0.12 * lift + r(3));
     p.roll = t < 1.3 ? Math.sin(t * 25) * 0.06 * lift : THREE.MathUtils.lerp(0, 0.7, THREE.MathUtils.smoothstep(t, 1.3, 1.7));
-    if (t > 1.3) p.pitch -= dt * 1.2;
+    if (t > 1.3 && !p.vr) p.pitch -= dt * 1.2;
     p.ch.vel.set(0, 0, 0);
     if (!this.pulledFrom) this.physics.moveCharacter(p.ch, dt);
     p.syncCamera(dt);
@@ -975,9 +1039,11 @@ class Game {
   updateEnding(dt) {
     this.endT += dt;
     const p = this.player;
-    // Slowly look around the room.
-    p.yaw += dt * 0.25;
-    p.pitch += (0 - p.pitch) * dt;
+    // Slowly look around the room (on a monitor; in VR you look yourself).
+    if (!p.vr) {
+      p.yaw += dt * 0.25;
+      p.pitch += (0 - p.pitch) * dt;
+    }
     p.syncCamera(dt);
     $('fade').style.opacity = String(Math.max(0, Math.min(1, (this.endT - 2.5) / 2.5)));
     if (this.endT > 5.2 && $('end').classList.contains('hidden')) {
@@ -988,6 +1054,8 @@ class Game {
       $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${mm}:${ss}</b><br />Times caught: <b>${this.catches}</b>`;
       $('hud').classList.add('hidden');
       $('end').classList.remove('hidden');
+      // Take the headset off to see the end screen.
+      if (this.vr.active) setTimeout(() => this.vr.exit(), 2500);
       this.state = 'won';
     }
   }
@@ -1020,25 +1088,28 @@ class Game {
       const a = Math.sin(this.time * 0.12) * 0.5;
       this.camera.position.set(Math.sin(a) * 9, 2.4, 6 + Math.cos(a) * 2);
       this.camera.lookAt(0, 4, -16);
-      this.world.update(dt, this.camera.position);
+      this.world.update(dt, this.camWorld());
       this.neighbor.update(dt, p, this);
     } else if (this.state === 'playing') {
       this.playTime += dt;
+      if (this.vr.active) this.vr.update(dt);
       if (this.altView()) {
         // Your body stays put while a debug camera is active.
       } else if (this.hideAnim) {
         this.updateHideAnim(dt);
       } else if (p.hidden) {
         // Peeking out of a wardrobe: look around a little, no moving.
-        let d = p.yaw - p.hidden.yaw;
-        d = Math.atan2(Math.sin(d), Math.cos(d));
-        p.yaw = p.hidden.yaw + THREE.MathUtils.clamp(d, -1.1, 1.1);
-        p.pitch = THREE.MathUtils.clamp(p.pitch, -0.6, 0.5);
+        if (!p.vr) {
+          let d = p.yaw - p.hidden.yaw;
+          d = Math.atan2(Math.sin(d), Math.cos(d));
+          p.yaw = p.hidden.yaw + THREE.MathUtils.clamp(d, -1.1, 1.1);
+          p.pitch = THREE.MathUtils.clamp(p.pitch, -0.6, 0.5);
+        }
         p.syncCamera(dt);
       } else {
         p.update(dt, (pos, r) => this.emitNoise(pos, r));
       }
-      this.world.update(dt, this.camera.position);
+      this.world.update(dt, this.camWorld());
       this.updateItems(dt);
       this.updateAppliances(dt);
       // Things stashed in cupboards only show up once the door is open.
@@ -1053,7 +1124,8 @@ class Game {
       this.noises.length = 0;
       this.neighbor.update(dt, p, this);
       if (this.neighbor.state !== 'chase') this.sound.setChase(false);
-      this.target = this.altView() ? null : this.findTarget();
+      // (In VR each hand aims its own laser; see vr.js.)
+      if (!this.vr.active) this.target = this.altView() ? null : this.findTarget();
       this.updatePrompt();
       this.updateHUD();
       this.checkEnding();
@@ -1063,21 +1135,23 @@ class Game {
         $('fade').style.opacity = String(this.fadeOut);
       }
     } else if (this.state === 'caught') {
-      this.world.update(dt, this.camera.position);
+      this.world.update(dt, this.camWorld());
       this.neighbor.update(dt, p, this);
       this.updateCaught(dt);
+      if (this.vr.active) this.vr.update(dt);
     } else if (this.state === 'ending') {
-      this.world.update(dt, this.camera.position);
+      this.world.update(dt, this.camWorld());
       this.updateEnding(dt);
+      if (this.vr.active) this.vr.update(dt);
     }
 
     if (this.debug && this.state !== 'menu') this.debug.update(dt);
     // Hear from wherever the camera is (your head, his head, or the free camera).
     this.camera.getWorldDirection(this.tmpDir || (this.tmpDir = new THREE.Vector3()));
-    this.sound.setListener(this.camera.position, Math.atan2(-this.tmpDir.x, -this.tmpDir.z));
+    this.sound.setListener(this.camWorld(), Math.atan2(-this.tmpDir.x, -this.tmpDir.z));
     if (this.state === 'playing') this.sound.ambience(dt, p.pos.y < 0.2 && p.pos.y > -0.5);
     this.updateShards(dt);
-    this.sky.position.copy(this.camera.position);
+    this.sky.position.copy(this.camWorld());
     // Nothing moves while paused or on the end screen: draw one frame, then idle the GPU.
     if (this.state === 'paused' || this.state === 'won') {
       if (this.stillFrame) return;

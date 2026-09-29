@@ -34,6 +34,7 @@ export class Player {
     this.camOffset = new THREE.Vector3();
     this.roll = 0;
     this.moving = false;
+    this.vr = null; // VR controller (vr.js) while in a headset
   }
 
   get pos() {
@@ -41,6 +42,8 @@ export class Player {
   }
 
   eye(out = new THREE.Vector3()) {
+    // In VR your eyes are wherever your head actually is (duck for real to hide!).
+    if (this.vr) return this.vr.headWorld(out);
     return out.set(this.ch.pos.x, this.ch.pos.y + this.eyeH, this.ch.pos.z);
   }
 
@@ -77,32 +80,36 @@ export class Player {
     if (k.has('ArrowUp')) this.pitch = Math.min(1.5, this.pitch + lookSpeed);
     if (k.has('ArrowDown')) this.pitch = Math.max(-1.5, this.pitch - lookSpeed);
 
-    const wantCrouch = k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight');
+    const vi = this.vr ? this.vr.input : null;
+    const wantCrouch = vi ? vi.crouch || this.vr.headHeight() < 1.15 : k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight');
     if (wantCrouch) this.crouching = true;
     else if (this.crouching && !this.physics.blockedAbove(this.ch, STAND_H)) this.crouching = false;
     this.ch.height = this.crouching ? CROUCH_H : STAND_H;
     const targetEye = this.crouching ? CROUCH_EYE : STAND_EYE;
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * 12);
 
-    const f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
-    const s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
-    const sin = Math.sin(this.yaw);
-    const cos = Math.cos(this.yaw);
+    // Thumbstick in VR (partial tilt = slower), keys on desktop.
+    const f = vi ? -vi.moveY : (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0);
+    const s = vi ? vi.moveX : (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0);
+    const moveYaw = vi ? this.vr.headYaw() : this.yaw;
+    const sin = Math.sin(moveYaw);
+    const cos = Math.cos(moveYaw);
     let wx = -sin * f + cos * s;
     let wz = -cos * f - sin * s;
     const wl = Math.hypot(wx, wz);
-    if (wl > 0) {
+    if (wl > 1) {
       wx /= wl;
       wz /= wl;
     }
-    this.sprinting = (k.has('ShiftLeft') || k.has('ShiftRight')) && f > 0 && !this.crouching;
+    this.sprinting = (vi ? vi.sprint && wl > 0.3 : (k.has('ShiftLeft') || k.has('ShiftRight')) && f > 0) && !this.crouching;
     const speed = this.crouching ? 1.9 : this.sprinting ? 6.2 : 3.7;
     const accel = this.ch.onGround ? 14 : 3;
     const blend = Math.min(1, accel * dt);
     this.ch.vel.x += (wx * speed - this.ch.vel.x) * blend;
     this.ch.vel.z += (wz * speed - this.ch.vel.z) * blend;
 
-    if (k.has('Space') && this.ch.onGround && !this.crouching) {
+    if ((vi ? vi.jump : k.has('Space')) && this.ch.onGround && !this.crouching) {
+      if (vi) vi.jump = false;
       this.ch.vel.y = 5.0;
       this.ch.onGround = false;
     }
@@ -133,6 +140,11 @@ export class Player {
   }
 
   syncCamera(dt) {
+    if (this.vr) {
+      // The headset drives the camera; we just move the play space around.
+      this.vr.placeRig();
+      return;
+    }
     const target = this.ch.pos.y + this.eyeH;
     if (dt === 0 || Math.abs(target - this.camY) > 0.8) this.camY = target;
     else this.camY += (target - this.camY) * Math.min(1, dt * 18);

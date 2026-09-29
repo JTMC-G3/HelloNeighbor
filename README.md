@@ -116,6 +116,41 @@ a fresh one.
 
 ---
 
+## 🥽 VR mode (WebXR)
+
+Got a headset? Open the game in your headset's browser (Quest Browser, Pico Browser, Wolvic)
+or in a WebXR-capable desktop browser with PC VR connected, and press **Play in VR** on the
+title screen. The button only appears when a headset is available.
+
+WebXR needs a secure page, so use **HTTPS** or `localhost`. The easiest way from a Quest is
+the Cloudflare tunnel above (`npm run share` + `cloudflared`), then open the
+`https://….trycloudflare.com` link in the Quest browser.
+
+| Control | What it does |
+| --- | --- |
+| **Left stick** | Walk where you're looking (click it to sprint) |
+| **Right stick** | Snap turn 45° |
+| **Trigger** | Use what that hand's laser points at: doors, cupboards, keys, wardrobes, TVs |
+| **Grip** | Grab an item. **Let go mid-swing to throw it** (windows smash, the neighbor gets stunned) |
+| **Left trigger** (pointing at nothing) | Flashlight, held in your left hand |
+| **A / X** | Jump |
+| **B** | Crouch toggle, or just **duck in real life** |
+
+What's different in VR:
+
+* **Physical play:** throw things for real, peek around corners, and duck behind counters.
+  Crouching in your room makes you quieter and harder to see, because he checks where your
+  head actually is.
+* **Room-scale walking** is supported, but walls still stop you. You can't lean your head
+  through a wall to peek.
+* **Haptics:** a heartbeat in your hands while he's chasing you (faster when he's close), a
+  jolt when he spots you, and a big one when he grabs you.
+* **HUD in the headset:** prompts, messages, his awareness, and wardrobe slats while hiding.
+* **Comfort:** the game never turns or rolls your view for you. Standalone headsets drop to
+  the Low preset automatically, and PC VR is capped at Medium.
+
+---
+
 ## 🐞 Debug mode
 
 Tick **Debug mode** on the title screen before pressing Play (it's remembered). You get:
@@ -177,6 +212,7 @@ src/rng.js            Seeded random numbers (so a house can be replayed)
 src/neighbor.js       Neighbor model, vision/hearing, patrol/investigate/chase AI
 src/chores.js         The neighbor's everyday chores (poses, props, sounds)
 src/debug.js          Debug mode: chams/ESP, info panel, neighbor's-eye view, free camera
+src/vr.js             WebXR: play-space rig, hands, lasers, throwing, haptics, in-headset HUD
 src/nav.js            Waypoint graph + pathfinding for the neighbor
 src/player.js         First-person controller (walk, sprint, crouch, jump)
 src/physics.js        AABB collision (grid broadphase) for characters and sphere items
