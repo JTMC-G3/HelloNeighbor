@@ -9,6 +9,7 @@ const VIEW_RANGE = 22;
 const FOV_COS = Math.cos(THREE.MathUtils.degToRad(62));
 
 const visionFilter = (c) => c.kind !== 'glass';
+const wallsOnly = (c) => c.kind === 'wall';
 
 function buildModel(textures) {
   const root = new THREE.Group();
@@ -107,6 +108,7 @@ export class Neighbor {
     };
     this.heading = 0;
     this.path = [];
+    this.pathIds = [];
     this.pathIdx = 0;
     this.awareness = 0;
     this.lastSeen = new THREE.Vector3();
@@ -159,6 +161,7 @@ export class Neighbor {
     this.goal = this.guard;
     this.sawHide = false;
     this.path = [];
+    this.pathIds = [];
     this.pathIdx = 0;
     this.awareness = 0;
     this.lost = 0;
@@ -205,32 +208,81 @@ export class Neighbor {
     return !this.physics.segmentBlocked(e, this.tmp2, visionFilter);
   }
 
-  setPathTo(target, via = null) {
-    const from = this.nav.nearest(this.ch.pos);
-    const to = via || this.nav.nearest(target);
-    const ids = this.nav.path(from, to) || [from];
+  /**
+   * Route (node ids) from where he is to node `to`. Normally from the nearest
+   * waypoint, but if he's partway along his current route (halfway up the
+   * stairs, in a doorway) either end of the stretch he's on will do: pick the
+   * cheaper one, so re-planning can't flip him back and forth.
+   */
+  planTo(to) {
+    const cands = new Set([this.nav.nearest(this.ch.pos)]);
+    if (this.pathIds && this.pathIdx < this.pathIds.length) {
+      const next = this.pathIds[this.pathIdx];
+      const prev = this.pathIdx > 0 ? this.pathIds[this.pathIdx - 1] : null;
+      if (next != null) cands.add(next);
+      if (prev != null) cands.add(prev);
+    }
+    let best = null;
+    let bestCost = Infinity;
+    for (const c of cands) {
+      if (c == null) continue;
+      const ids = this.nav.path(c, to);
+      if (!ids) continue;
+      let cost = this.ch.pos.distanceTo(this.nav.pos(c));
+      for (let i = 1; i < ids.length; i++) cost += this.nav.pos(ids[i - 1]).distanceTo(this.nav.pos(ids[i]));
+      if (cost < bestCost) {
+        best = ids;
+        bestCost = cost;
+      }
+    }
+    return best;
+  }
+
+  /** Follow `ids` (then optionally walk on to `target`). */
+  usePath(ids, target = null, reachable = true) {
     const pts = ids.map((id) => this.nav.pos(id));
+    const idl = ids.slice();
     // Skip the first node if we can already head straight for the second.
-    if (pts.length > 1 && this.nav.clear(this.ch.pos, pts[1]) && Math.abs(pts[1].y - this.ch.pos.y) < 1) pts.shift();
-    const last = pts[pts.length - 1];
-    if (!last || (Math.abs(last.y - target.y) < 1 && this.nav.clear(last, target))) pts.push(target.clone());
+    if (pts.length > 1 && this.nav.clear(this.ch.pos, pts[1]) && Math.abs(pts[1].y - this.ch.pos.y) < 1) {
+      pts.shift();
+      idl.shift();
+    }
+    if (target && reachable) {
+      const last = pts[pts.length - 1];
+      // (Things on furniture count too: a radio on a shelf is still in this room.)
+      if (!last || (Math.abs(last.y - target.y) < 1.6 && this.nav.clear(last, target))) {
+        pts.push(target.clone());
+        idl.push(null);
+      }
+    }
     this.path = pts;
+    this.pathIds = idl;
     this.pathIdx = 0;
   }
 
+  setPathTo(target, via = null) {
+    const to = via || this.nav.nearest(target);
+    const ids = this.planTo(to);
+    if (ids) this.usePath(ids, target);
+    else this.usePath(this.nav.pathToward(this.nav.nearest(this.ch.pos), target) || [this.nav.nearest(this.ch.pos)], target, false);
+  }
+
   setPathToNode(id) {
-    const from = this.nav.nearest(this.ch.pos);
-    const ids = this.nav.path(from, id);
+    const ids = this.planTo(id);
     if (!ids) {
       // Unreachable right now (boarded-up door): just stay put for a bit.
       this.path = [];
+      this.pathIds = [];
       this.pathIdx = 0;
       return;
     }
-    const pts = ids.map((n) => this.nav.pos(n));
-    if (pts.length > 1 && this.nav.clear(this.ch.pos, pts[1]) && Math.abs(pts[1].y - this.ch.pos.y) < 1) pts.shift();
-    this.path = pts;
-    this.pathIdx = 0;
+    this.usePath(ids);
+  }
+
+  /** Near enough to what he's investigating, with no wall in between? */
+  reached(p) {
+    const e = this.eye(this.eyeV);
+    return Math.hypot(p.x - e.x, p.z - e.z) < 1.3 && Math.abs(p.y - this.ch.pos.y) < 1.8 && !this.physics.segmentBlocked(e, this.tmp2.set(p.x, p.y + 0.3, p.z), wallsOnly);
   }
 
   moveToward(p, speed, dt) {
@@ -495,6 +547,9 @@ export class Neighbor {
     if (pos.distanceTo(this.ch.pos) > radius * factor) return;
     this.lastHeard = { pos: pos.clone(), radius, t: game.time };
     this.awareness = Math.max(this.awareness, 0.4);
+    // Already on his way to (or looking around) that spot: carry on rather than
+    // starting over (a radio left on makes a noise every second or so).
+    if (this.state === 'investigate' && this.investigatePos.distanceTo(pos) < 3) return;
     this.investigate(pos, 3.5);
   }
 
@@ -649,11 +704,12 @@ export class Neighbor {
       case 'investigate': {
         if (!this.arrived) {
           trying = true;
-          if (this.followPath(WALK * 1.35, dt)) {
+          if (this.followPath(WALK * 1.35, dt) || this.reached(this.investigatePos)) {
             this.arrived = true;
+            this.stop(dt);
             // Whatever made that racket gets switched off.
             for (const app of game.world.appliances) {
-              if (app.on && app.pos.distanceTo(this.ch.pos) < 3.2) game.setAppliance(app, false, true);
+              if (app.on && app.pos.distanceTo(this.ch.pos) < 3.6) game.setAppliance(app, false, true);
             }
           }
         } else {

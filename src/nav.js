@@ -137,6 +137,33 @@ export class Nav {
     return out;
   }
 
+  /**
+   * When `target` can't be reached (behind a boarded-up door): the route to the
+   * reachable waypoint closest to it, so he at least gets as near as he can.
+   */
+  pathToward(from, target) {
+    const seen = new Set([from]);
+    const queue = [from];
+    let best = from;
+    let bestD = Infinity;
+    while (queue.length) {
+      const id = queue.shift();
+      const p = this.nodes.get(id).pos;
+      // Being on the right floor matters more than being close through a ceiling.
+      const d = Math.hypot(p.x - target.x, p.z - target.z) + Math.abs(p.y - target.y) * 3;
+      if (d < bestD) {
+        best = id;
+        bestD = d;
+      }
+      for (const { to, door } of this.nodes.get(id).links) {
+        if ((door && door.boarded) || seen.has(to)) continue;
+        seen.add(to);
+        queue.push(to);
+      }
+    }
+    return this.path(from, best);
+  }
+
   /** Lists edges whose straight line is blocked by level geometry (dev check). */
   validate() {
     const bad = [];
