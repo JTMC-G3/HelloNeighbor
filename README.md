@@ -98,6 +98,7 @@ There are no objectives or hints. Exploring and figuring things out is the game.
   but he'll hear the glass.
 * He patrols the house and yard. The **eye** at the top of the screen shows how suspicious
   he is. When it turns red he's chasing you, so break line of sight or get off his property.
+  He never leaves his yard: once you're out of his front gate he can't follow you home.
 * Walking and crouching are silent. Running makes a little noise if he's close by.
 * Cupboards, fridges and chests open, and things are often tucked away inside.
 * You can hide in wardrobes. If he watched you climb in, he'll yank the doors open and drag
@@ -142,8 +143,9 @@ Playing as the neighbor: you're a bit taller and slightly faster than the kids.
 **Click** grabs a kid in front of you, **E** on a wardrobe searches it (anyone hiding inside
 is caught), and you can open doors and throw things, but you can't pick up keys or the
 crowbar. It's your house, so you can open **padlocked doors and the front door** (boarded-up
-doors still stop you). A kid who hits you with a thrown object stuns you for a couple of
-seconds.
+doors still stop you). You can't leave your property, though: the front gate is as far as
+you go, and kids outside it can't be grabbed. A kid who hits you with a thrown object stuns
+you for a couple of seconds.
 
 You hear the kids by the same rules as the AI neighbor: walking and crouching are silent,
 but running, landing from a jump, and doors, cupboards and pried-off boards near you give

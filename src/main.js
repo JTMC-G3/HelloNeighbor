@@ -511,6 +511,34 @@ class Game {
     return p.x > y.x0 - 0.1 && p.x < y.x1 + 0.1 && p.z < y.z1 + 0.1 && p.z > y.z0 - 0.2;
   }
 
+  /**
+   * The neighbor never leaves his property (the fence has one gap, the front
+   * gate). Pushes `ch` back inside; returns true if it had to.
+   */
+  keepOnProperty(ch) {
+    if (ch.pos.y < -0.5) return false;
+    const y = this.world.yard;
+    const m = 0.35;
+    const x = THREE.MathUtils.clamp(ch.pos.x, y.x0 + m, y.x1 - m);
+    const z = THREE.MathUtils.clamp(ch.pos.z, y.z0 + m, y.z1 - m);
+    if (x === ch.pos.x && z === ch.pos.z) return false;
+    if (x !== ch.pos.x) ch.vel.x = 0;
+    if (z !== ch.pos.z) ch.vel.z = 0;
+    ch.pos.x = x;
+    ch.pos.z = z;
+    return true;
+  }
+
+  /** The closest point to `p` that the neighbor is allowed to walk to. */
+  clampToProperty(p) {
+    const out = p.clone();
+    if (p.y < -0.5) return out;
+    const y = this.world.yard;
+    out.x = THREE.MathUtils.clamp(out.x, y.x0 + 0.4, y.x1 - 0.4);
+    out.z = THREE.MathUtils.clamp(out.z, y.z0 + 0.4, y.z1 - 0.4);
+    return out;
+  }
+
   /** A noise the neighbor might hear. `by`: the player who made it, if any. */
   emitNoise(pos, radius, by = null) {
     this.noises.push({ pos: pos.clone(), radius, by });
@@ -805,6 +833,8 @@ class Game {
     const kid = id === this.mp.myId ? this.player : this.mp.peers.get(id);
     if (!kid || kid.role !== 'kid' || kid.hidden) return;
     if ((kid === this.player && this.state === 'caught') || kid.caughtAnim) return;
+    // Off his property (out on the street, or home): safe.
+    if (!this.onProperty(kid.pos)) return;
     const dist = Math.hypot(kid.pos.x - actor.pos.x, kid.pos.z - actor.pos.z);
     if (dist > 2.6 || Math.abs(kid.pos.y - actor.pos.y) > 1.6) return;
     this.mp.catchPlayer(kid);
@@ -823,7 +853,7 @@ class Game {
     let best = null;
     let bestD = 2.1;
     for (const peer of this.mp.peers.values()) {
-      if (peer.role !== 'kid' || peer.hidden || peer.caughtAnim) continue;
+      if (peer.role !== 'kid' || peer.hidden || peer.caughtAnim || !this.onProperty(peer.pos)) continue;
       const to = peer.eye(new THREE.Vector3()).sub(eye);
       to.y *= 0.5;
       const d = to.length();
@@ -1478,6 +1508,14 @@ class Game {
         } else {
           if (p.roll && !p.hidden) p.roll = 0;
           p.update(dt, (pos, r) => this.emitNoise(pos, r, p));
+          // Playing the neighbor: you can't leave your property either.
+          if (this.role === 'neighbor' && this.keepOnProperty(p.ch)) {
+            p.syncCamera(0);
+            if (!(this.fenceToast > this.time)) {
+              this.fenceToast = this.time + 4;
+              this.toast("You don't leave your property. Let them come to you.", 2200);
+            }
+          }
         }
       }
       this.world.update(dt, this.camera.position);

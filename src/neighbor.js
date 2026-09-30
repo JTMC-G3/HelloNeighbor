@@ -433,8 +433,10 @@ export class Neighbor {
   investigate(pos, lookTime = 3) {
     if (this.task) this.endTask(true);
     this.state = 'investigate';
-    this.investigatePos.copy(pos);
-    this.setPathTo(pos);
+    // He never goes off his property, so at most as far as the fence.
+    const target = this.gameRef ? this.gameRef.clampToProperty(pos) : pos;
+    this.investigatePos.copy(target);
+    this.setPathTo(target);
     this.lookTimer = lookTime;
     this.arrived = false;
   }
@@ -472,21 +474,23 @@ export class Neighbor {
    * whoever he's chasing (while he can still see them), else the closest one
    * he can see, else whoever he was after, else the closest.
    */
-  pickFocus(players) {
+  pickFocus(players, game) {
     if (!players.length) return null;
     if (players.length === 1) return players[0];
     const cur = players.includes(this.focus) ? this.focus : null;
     if (cur && this.state === 'openCloset') return cur;
+    // Anyone off his property (on the street, or home) is out of his reach.
+    const reachable = (p) => !game || game.onProperty(p.pos);
     let best = null;
     let bestD = Infinity;
     for (const p of players) {
-      const d = p.pos.distanceTo(this.ch.pos);
+      const d = p.pos.distanceTo(this.ch.pos) + (reachable(p) ? 0 : 1000);
       if (d < bestD && this.canSee(p)) {
         best = p;
         bestD = d;
       }
     }
-    if (cur && this.state === 'chase' && (!best || this.canSee(cur))) return cur;
+    if (cur && this.state === 'chase' && reachable(cur) && (!best || this.canSee(cur))) return cur;
     if (best) return best;
     if (cur) return cur;
     let near = players[0];
@@ -620,6 +624,7 @@ export class Neighbor {
         this.ch.vel.z = (-dz / d) * 1.5;
       } else this.stop(dt);
       this.physics.moveCharacter(this.ch, dt);
+      game.keepOnProperty(this.ch);
       this.turnTo(Math.atan2(dx, dz), dt, 14);
       this.grabbing = true;
       this.catchT = g.t;
@@ -635,7 +640,7 @@ export class Neighbor {
       this.animate(dt);
       return;
     }
-    const player = this.pickFocus(players) || this.nobody;
+    const player = this.pickFocus(players, game) || this.nobody;
     if (player !== this.focus && this.sawHideOf && this.sawHideOf !== player) this.sawHide = false;
     this.focus = player;
     const ghost = false;
@@ -723,11 +728,17 @@ export class Neighbor {
       case 'chase': {
         if (this.sees) this.lost = 0;
         else this.lost += dt;
-        if (!onProp && toP > 7) {
-          // Chased you off his property.
+        if (!onProp) {
+          // Chased you off his property: he won't follow. He stops and glares.
           game.toastTo(player, 'He lost interest... for now.');
           this.awareness = 0.3;
-          this.startPatrol();
+          if (this.task) this.endTask(true);
+          this.state = 'patrol';
+          this.path = [];
+          this.pathIds = [];
+          this.pathIdx = 0;
+          this.wait = 3;
+          this.stop(dt);
           break;
         }
         if (this.lost > 4.5) {
@@ -780,7 +791,10 @@ export class Neighbor {
     }
 
     const planted = this.task && this.task.phase === 'do' && this.task.chore.fixed;
-    if (!planted) this.physics.moveCharacter(this.ch, dt);
+    if (!planted) {
+      this.physics.moveCharacter(this.ch, dt);
+      game.keepOnProperty(this.ch);
+    }
     this.speed = Math.hypot(this.ch.vel.x, this.ch.vel.z);
     this.handleDoors(dt);
     this.checkStuck(dt, trying);
