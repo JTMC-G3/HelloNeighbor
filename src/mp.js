@@ -104,6 +104,7 @@ export class Multiplayer {
     });
     $('mpGo').addEventListener('click', () => this.hostStart());
     $('mpGoneBtn').addEventListener('click', () => {
+      this.game.allowLeave();
       window.location.href = window.location.pathname;
     });
   }
@@ -199,6 +200,7 @@ export class Multiplayer {
     if (this.inRoom) {
       // Simplest way to tidy everything up.
       this.net.close();
+      this.game.allowLeave();
       window.location.href = window.location.pathname;
       return;
     }
@@ -369,6 +371,7 @@ export class Multiplayer {
           }
           this.net.onClose = () => {};
           this.net.close();
+          this.game.allowLeave();
           window.location.search = `?seed=${d.seed}`;
           return;
         }

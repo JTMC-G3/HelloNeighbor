@@ -383,11 +383,14 @@ class Game {
     for (const b of document.querySelectorAll('.leaveBtn')) b.addEventListener('click', () => this.mp.leave());
     // Same house again (keeps the seed in the URL) or a brand-new house.
     const replay = () => {
+      this.allowLeave();
       window.location.search = `?seed=${this.seed}`;
     };
     const fresh = () => {
+      this.allowLeave();
       window.location.href = window.location.pathname;
     };
+    this.guardTab();
     $('restartBtn').addEventListener('click', replay);
     $('againBtn').addEventListener('click', replay);
     for (const b of document.querySelectorAll('.newHouseBtn')) b.addEventListener('click', fresh);
@@ -421,6 +424,50 @@ class Game {
     } catch {
       this.lockFailed();
     }
+  }
+
+  /**
+   * Stop Ctrl+W (easy to hit: Ctrl crouches, W walks) from closing the game.
+   * Browsers never let a page swallow Ctrl+W outright, so:
+   *  - while a game is going, closing the tab asks "Leave site?" first;
+   *  - in fullscreen (Chrome/Edge), the Keyboard Lock API hands Ctrl+W to
+   *    the game, so it does nothing at all;
+   *  - other Ctrl shortcuts that clash with the controls (Ctrl+F find,
+   *    Ctrl+D bookmark, Ctrl+S save...) are cancelled while playing.
+   */
+  guardTab() {
+    this.leaving = false;
+    window.addEventListener('beforeunload', (e) => {
+      const inGame = this.state !== 'menu' && this.state !== 'won';
+      if (this.leaving || !(inGame || this.mp.inRoom)) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
+    const clash = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyF', 'KeyQ', 'KeyG', 'KeyC', 'KeyP', 'KeyM', 'Space']);
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && clash.has(e.code) && this.state !== 'menu') e.preventDefault();
+    }, true);
+    const checks = document.querySelectorAll('.fullChk');
+    const sync = () => {
+      const on = !!document.fullscreenElement;
+      for (const c of checks) c.checked = on;
+      if (on && navigator.keyboard && navigator.keyboard.lock) {
+        navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyF', 'KeyC']).catch(() => {});
+      }
+    };
+    for (const c of checks) {
+      if (!document.documentElement.requestFullscreen) c.parentElement.classList.add('hidden');
+      c.addEventListener('change', () => {
+        if (c.checked) document.documentElement.requestFullscreen().catch(() => sync());
+        else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      });
+    }
+    document.addEventListener('fullscreenchange', sync);
+  }
+
+  /** Leaving on purpose (restart, new house, leave the game): no "Leave site?" prompt. */
+  allowLeave() {
+    this.leaving = true;
   }
 
   /** The browser refused to capture the mouse: drag to look until it works. */

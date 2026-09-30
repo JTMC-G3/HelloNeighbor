@@ -85,6 +85,7 @@ server (see below).
 | **Left click** | Throw held item |
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
+| **Ctrl+W** | Won't close the game by accident: the browser asks "Leave site?" first, and in **Fullscreen** (tick it on the title screen or pause menu; Chrome/Edge) it does nothing at all |
 | **M** | Capture the mouse again, if the browser refused (it often does right after Esc) |
 | **Esc** / **P** | Pause (sensitivity, volume, restart). In multiplayer it opens the menu without pausing |
 | **`** | Debug mode on / off (see below) |
