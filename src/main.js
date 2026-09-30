@@ -300,6 +300,11 @@ class Game {
     this.drag = null;
 
     document.addEventListener('keydown', (e) => {
+      // M: grab the mouse again (browsers sometimes refuse, e.g. right after Esc).
+      if (e.code === 'KeyM' && !e.repeat && (this.state === 'playing' || this.state === 'paused')) {
+        this.fixMouse();
+        return;
+      }
       if (this.state !== 'playing' || this.menuOpen) return;
       p.keys.add(e.code);
       if (e.repeat) return;
@@ -346,12 +351,14 @@ class Game {
         if (e.button === 0) this.primary();
         if (e.button === 2) this.drop();
       } else {
-        this.drag = { x: e.clientX, y: e.clientY, moved: 0, button: e.button };
-        if (!this.pointerLockFailed) this.lockPointer();
+        this.drag = { x: e.clientX, y: e.clientY, moved: 0, button: e.button, failed: this.pointerLockFailed };
+        // Every click tries again, even if the browser said no before.
+        this.lockPointer();
       }
     });
     window.addEventListener('mouseup', () => {
-      if (this.drag && this.drag.moved < 6 && this.pointerLockFailed && this.state === 'playing') {
+      // (A click that just got the mouse captured doesn't also throw.)
+      if (this.drag && this.drag.moved < 6 && this.drag.failed && document.pointerLockElement !== this.canvas && this.state === 'playing') {
         if (this.drag.button === 0) this.primary();
         if (this.drag.button === 2) this.drop();
       }
@@ -361,14 +368,15 @@ class Game {
 
     this.lockedAt = 0;
     document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement === this.canvas) this.lockedAt = performance.now();
+      if (document.pointerLockElement === this.canvas) {
+        this.lockedAt = performance.now();
+        if (this.pointerLockFailed) this.toast('Mouse captured.', 1500);
+        this.pointerLockFailed = false;
+        $('lockNote').classList.add('hidden');
+      }
       if (document.pointerLockElement !== this.canvas && this.state === 'playing' && !this.pointerLockFailed) this.pause();
     });
-    document.addEventListener('pointerlockerror', () => {
-      this.pointerLockFailed = true;
-      $('lockNote').classList.remove('hidden');
-      this.toast('Mouse capture is blocked here: drag to look, or open the game in its own browser tab.');
-    });
+    document.addEventListener('pointerlockerror', () => this.lockFailed());
 
     $('playBtn').addEventListener('click', () => this.start());
     $('resumeBtn').addEventListener('click', () => this.resume());
@@ -406,12 +414,27 @@ class Game {
   }
 
   lockPointer() {
+    if (document.pointerLockElement === this.canvas) return;
     try {
       const r = this.canvas.requestPointerLock();
-      if (r && r.catch) r.catch(() => {});
+      if (r && r.catch) r.catch(() => this.lockFailed());
     } catch {
-      this.pointerLockFailed = true;
+      this.lockFailed();
     }
+  }
+
+  /** The browser refused to capture the mouse: drag to look until it works. */
+  lockFailed() {
+    if (document.pointerLockElement === this.canvas) return;
+    if (!this.pointerLockFailed) this.toast('Mouse capture was blocked. Press M (or click) to try again. Until then, drag to look.', 4500);
+    this.pointerLockFailed = true;
+    $('lockNote').classList.remove('hidden');
+  }
+
+  /** M key: try to capture the mouse again (and close the pause menu). */
+  fixMouse() {
+    if (this.state === 'paused' || this.menuOpen) this.resume();
+    else this.lockPointer();
   }
 
   start() {
@@ -487,14 +510,14 @@ class Game {
     if (this.menuOpen) {
       this.menuOpen = false;
       $('pause').classList.add('hidden');
-      if (!this.pointerLockFailed) this.lockPointer();
+      this.lockPointer();
       return;
     }
     if (this.state !== 'paused') return;
     $('pause').classList.add('hidden');
     this.state = 'playing';
     this.lastTime = performance.now();
-    if (!this.pointerLockFailed) this.lockPointer();
+    this.lockPointer();
   }
 
   onResize() {

@@ -85,6 +85,7 @@ server (see below).
 | **Left click** | Throw held item |
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
+| **M** | Capture the mouse again, if the browser refused (it often does right after Esc) |
 | **Esc** / **P** | Pause (sensitivity, volume, restart). In multiplayer it opens the menu without pausing |
 | **`** | Debug mode on / off (see below) |
 
