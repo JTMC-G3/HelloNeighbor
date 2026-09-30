@@ -883,6 +883,7 @@ class Game {
   /** Versus: the neighbor player yanks a wardrobe open. Anyone inside is caught. */
   searchWardrobe(actor, spot) {
     if (!spot || actor.role !== 'neighbor') return;
+    if (this.mp.cantCatch(actor)) return;
     spot.target = 1;
     this.sfx.door(spot.out, true);
     clearTimeout(spot.closeTimer);
@@ -902,6 +903,7 @@ class Game {
     if (!this.online || actor.role !== 'neighbor' || this.state === 'ending') return;
     const kid = id === this.mp.myId ? this.player : this.mp.peers.get(id);
     if (!kid || kid.role !== 'kid' || kid.hidden) return;
+    if (this.mp.cantCatch(actor)) return;
     if ((kid === this.player && this.state === 'caught') || kid.caughtAnim) return;
     // Off his property (out on the street, or home): safe.
     if (!this.onProperty(kid.pos)) return;
@@ -917,6 +919,11 @@ class Game {
       return;
     }
     if (this.stunned > 0 || this.grabCooldown > this.time) return;
+    const duty = this.mp.dutyView;
+    if (duty && duty.sk && !(duty.h > 0)) {
+      this.toast("You can't catch anyone while you're skipping your chores! Get back to them first.", 2500);
+      return;
+    }
     this.grabCooldown = this.time + 0.8;
     const eye = this.camera.position;
     const dir = this.camera.getWorldDirection(new THREE.Vector3());
@@ -1513,7 +1520,7 @@ class Game {
         const score = `caught ${mp.catches} / ${mp.catchTarget}`;
         if (!d) text = `You're the NEIGHBOR · ${score}`;
         else if (d.h > 0) text = `HUNTING · ${d.h}s · ${score} · Click: grab · E: search wardrobes`;
-        else if (d.sk) text = `Get back to your chore: ${d.l}! The kids can see you`;
+        else if (d.sk) text = `Skipping: ${d.l} · ${score}`;
         else if (d.at) text = `Doing your chore: ${d.l} · ${d.t}s left · ${score}`;
         else text = `Chore: ${d.l} · follow the green marker · ${score}`;
       } else {
@@ -1527,6 +1534,15 @@ class Game {
     if (text !== this.mpStatusText) {
       this.mpStatusText = text;
       $('mpStatus').textContent = text;
+    }
+    // Skipping chores as the neighbor: hard to miss.
+    const d = mp.dutyView;
+    const skip = mp.mode === 'versus' && this.role === 'neighbor' && d && d.sk && !(d.h > 0) ? d.l : '';
+    if (skip !== this.skipText) {
+      this.skipText = skip;
+      $('skipBanner').textContent = skip ? `⚠ SKIPPING CHORES: the kids can see you through walls and you can't catch anyone! Get back to ${skip}.` : '';
+      $('skipBanner').classList.toggle('hidden', !skip);
+      $('hud').classList.toggle('skipping', !!skip);
     }
   }
 

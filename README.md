@@ -158,7 +158,10 @@ and hear its usual sounds, but they never get told which chore he's on.
   hears or sees one again. When it runs out: "Nothing here... back to your chore."
 * **After a catch:** a new chore, plus 10 s of hunting in case another kid is close by.
 * **Skipping chores:** he can ignore them, but once he's had enough time to walk there
-  (plus 8 s), the kids see him through walls as a red silhouette until he gets back to it.
+  (plus 8 s) he's **skipping**: a red banner tells him, the kids see him through walls as a
+  red silhouette, and he **can't catch anyone or search wardrobes**. Hearing or seeing kids
+  doesn't get him out of it either; only going back to his chore does. So camping the
+  basement door just gets him spotted, and catches nobody.
 
 You hear the kids by the same rules as the AI neighbor: walking and crouching are silent,
 but running, landing from a jump, and doors, cupboards and pried-off boards near you give

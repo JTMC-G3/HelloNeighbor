@@ -921,6 +921,9 @@ export class Multiplayer {
 
   hunt(seconds) {
     if (this.mode !== 'versus' || !this.duty) return;
+    // Skipping chores: hearing or seeing kids doesn't get him off the hook.
+    // Only going back to his chore does (so camping a door is pointless).
+    if (this.duty.skipping) return;
     if (this.duty.huntT <= 0) this.tellDuty('Something\'s up. Go and look!');
     this.duty.huntT = Math.max(this.duty.huntT, seconds);
     this.duty.skipping = false;
@@ -1008,7 +1011,7 @@ export class Multiplayer {
     if (skipping !== d.skipping) {
       d.skipping = skipping;
       changed = true;
-      if (skipping) this.tellDuty('Get back to your chores! The kids can see you until you do.');
+      if (skipping) this.tellDuty("You're skipping your chores! Until you get back to them the kids can see you through walls, and you can't catch anyone.");
     }
     if (this.neighborId !== this.myId) this.setSkipping(skipping);
     d.sent -= dt;
@@ -1018,9 +1021,16 @@ export class Multiplayer {
     }
   }
 
+  /** Host: is the neighbor player barred from catching right now (skipping chores)? */
+  cantCatch(actor) {
+    if (this.mode !== 'versus' || !this.duty || !this.duty.skipping) return false;
+    this.toastTo(actor, "You can't catch anyone while you're skipping your chores! Get back to them first.", 2500);
+    return true;
+  }
+
   /** Kids: the neighbor is skipping his chores, so they can see him. */
   setSkipping(on) {
-    if (on && !this.skipping && this.me && this.me.role === 'kid') this.game.toast('The neighbor is skipping his chores! You can see him through the walls.', 3500);
+    if (on && !this.skipping && this.me && this.me.role === 'kid') this.game.toast("The neighbor is skipping his chores! You can see him through the walls, and he can't catch anyone until he goes back.", 4000);
     this.skipping = on;
   }
 

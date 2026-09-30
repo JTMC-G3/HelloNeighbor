@@ -629,3 +629,39 @@ body.debugView #held {
   text-overflow: ellipsis;
   pointer-events: none;
 }
+
+/* Versus: the neighbor player is skipping his chores. */
+#skipBanner {
+  position: absolute;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 8px 18px;
+  background: rgba(190, 20, 20, 0.88);
+  border: 2px solid #ff8a80;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: bold;
+  text-align: center;
+  pointer-events: none;
+  animation: skipPulse 1s ease-in-out infinite alternate;
+}
+
+#hud.skipping::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 90px 20px rgba(255, 30, 30, 0.55);
+  animation: skipPulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes skipPulse {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 1;
+  }
+}
