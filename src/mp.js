@@ -32,6 +32,7 @@ const HUNT_TIME = 25; // free to hunt this long after hearing or seeing a kid
 const CATCH_SUSPICIOUS = 10; // ...and this long after catching one
 const CHORE_TIME = [10, 20];
 const TRAVEL_GRACE = 8; // extra seconds to get to a chore before he's "skipping" it
+const BREAK_TIME = 15; // free time between finishing one chore and getting the next
 const PLAYER_SKIPS = new Set(['nap', 'mow']); // too long / sends you to sleep
 const $ = (id) => document.getElementById(id);
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -917,6 +918,7 @@ export class Multiplayer {
     d.allow = st ? this.travelTime(st) + TRAVEL_GRACE : Infinity;
     d.soundT = 0;
     d.sent = 0;
+    d.breakT = 0;
   }
 
   hunt(seconds) {
@@ -942,6 +944,7 @@ export class Multiplayer {
       h: Math.ceil(Math.max(0, d.huntT)),
       sk: d.skipping ? 1 : 0,
       at: d.at ? 1 : 0,
+      b: Math.ceil(Math.max(0, d.breakT || 0)),
     };
     if (say) msg.say = say;
     const nid = this.neighborId;
@@ -974,13 +977,21 @@ export class Multiplayer {
       }
     }
     let changed = false;
+    // A break between chores: free time, then the next chore.
+    if (d.breakT > 0) {
+      d.breakT -= dt;
+      if (d.breakT <= 0) {
+        this.assignChore(d.prev);
+        this.tellDuty(`Break's over! Next chore: ${this.choreName(d.station)}.`);
+      }
+    }
     if (d.huntT > 0) {
       d.huntT -= dt;
       d.at = false;
       if (d.huntT <= 0) {
         d.away = 0;
         d.allow = d.station ? this.travelTime(d.station) + TRAVEL_GRACE : Infinity;
-        this.tellDuty(`Nothing here... back to ${this.choreName(d.station)}.`);
+        this.tellDuty(d.station ? `Nothing here... back to ${this.choreName(d.station)}.` : 'Nothing here.');
       }
     } else if (d.station) {
       const s = d.station.stand;
@@ -1000,8 +1011,11 @@ export class Multiplayer {
           }
         }
         if (d.t <= 0) {
-          this.assignChore(d.station);
-          this.tellDuty(`Done! Next: ${this.choreName(d.station)}.`);
+          d.prev = d.station;
+          d.station = null;
+          d.at = false;
+          d.breakT = BREAK_TIME;
+          this.tellDuty(`Done! Take a ${BREAK_TIME}s break.`);
         }
       } else {
         d.away += dt;

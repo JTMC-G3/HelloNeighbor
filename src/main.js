@@ -1521,6 +1521,7 @@ class Game {
         if (!d) text = `You're the NEIGHBOR · ${score}`;
         else if (d.h > 0) text = `HUNTING · ${d.h}s · ${score} · Click: grab · E: search wardrobes`;
         else if (d.sk) text = `Skipping: ${d.l} · ${score}`;
+        else if (d.b > 0) text = `Break · ${d.b}s until your next chore · ${score} · Click: grab · E: search wardrobes`;
         else if (d.at) text = `Doing your chore: ${d.l} · ${d.t}s left · ${score}`;
         else text = `Chore: ${d.l} · follow the green marker · ${score}`;
       } else {

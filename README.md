@@ -151,7 +151,8 @@ you for a couple of seconds.
 
 **Chores (no camping):** like the AI neighbor, the neighbor player has chores. The HUD names
 the current one (e.g. "doing the dishes (kitchen)") and a green marker shows the spot. Stand
-there and it counts down (10-20 s), then the next one comes up. The kids see him doing it
+there and it counts down (10-20 s). Then he gets a **15 s break** (free to roam and catch
+kids, no skipping) before the next chore comes up. The kids see him doing it
 and hear its usual sounds, but they never get told which chore he's on.
 
 * **Hunting:** hearing or seeing a kid frees him to hunt for 25 s, topped up every time he
