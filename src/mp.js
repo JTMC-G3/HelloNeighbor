@@ -29,7 +29,7 @@ const SHARED_SOUNDS = new Set(['door', 'pry', 'thud', 'appliance', 'chore', 'gru
 const CATCHES_PER_KID = 8;
 // Versus: the neighbor player has chores to do (see updateDuty).
 const HUNT_TIME = 25; // free to hunt this long after hearing or seeing a kid
-const CATCH_SUSPICIOUS = 10; // ...and this long after catching one
+const CATCH_CALM = 3.5; // after a catch, the grab itself (the victim, the dropped item) can't start a hunt
 const CHORE_TIME = [10, 20];
 const TRAVEL_GRACE = 8; // extra seconds to get to a chore before he's "skipping" it
 const BREAK_TIME = 15; // free time between finishing one chore and getting the next
@@ -535,11 +535,14 @@ export class Multiplayer {
       const name = victim === this.game.player ? this.me.name : victim.name;
       const nid = this.neighborId;
       this.toastTo(nid === this.myId ? this.game.player : this.peers.get(nid), `Got ${name}! (${this.catches} / ${this.catchTarget})`, 2200);
-      // Back to the chores (a new one), but still on edge for a few seconds in case there's another kid.
+      // Straight back to chore mode (a new chore). He can still go after another kid he
+      // sees or hears, just not because of the kid he's holding or the thud of what they dropped.
       if (this.duty) {
-        this.assignChore(this.duty.station);
-        this.duty.huntT = CATCH_SUSPICIOUS;
-        this.tellDuty(`Back to your chores: ${this.choreName(this.duty.station)}. You've got ${CATCH_SUSPICIOUS}s if you spot another kid.`);
+        this.assignChore(this.duty.station || this.duty.prev);
+        this.duty.huntT = 0;
+        this.duty.skipping = false;
+        this.duty.calmUntil = this.game.time + CATCH_CALM;
+        this.tellDuty(`Back to your chores: ${this.choreName(this.duty.station)}.`);
       }
       if (this.catches >= this.catchTarget) this.finish('neighbor', null, `The neighbor caught the kids ${this.catches} times.`);
     } else if (text) {
@@ -875,8 +878,8 @@ export class Multiplayer {
    * Stops the neighbor player camping one spot: like the AI neighbor he has
    * chores to do. He's only free to hunt for HUNT_TIME seconds after hearing
    * or seeing a kid (topped up whenever he does again). When that runs out
-   * he's sent back to his chore. After a catch he gets a new chore plus
-   * CATCH_SUSPICIOUS seconds of hunting. He *can* ignore his chores, but then
+   * he's sent back to his chore. After a catch he goes straight back to
+   * chore mode with a new chore. He *can* ignore his chores, but then
    * the kids see him through walls until he gets back to them.
    */
   neighborPlayer() {
@@ -926,6 +929,8 @@ export class Multiplayer {
     // Skipping chores: hearing or seeing kids doesn't get him off the hook.
     // Only going back to his chore does (so camping a door is pointless).
     if (this.duty.skipping) return;
+    // The moment after a catch doesn't count (the kid in his hands, what they dropped).
+    if (this.game.time < (this.duty.calmUntil || 0)) return;
     if (this.duty.huntT <= 0) this.tellDuty('Something\'s up. Go and look!');
     this.duty.huntT = Math.max(this.duty.huntT, seconds);
     this.duty.skipping = false;

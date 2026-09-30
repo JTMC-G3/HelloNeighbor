@@ -157,7 +157,9 @@ and hear its usual sounds, but they never get told which chore he's on.
 
 * **Hunting:** hearing or seeing a kid frees him to hunt for 25 s, topped up every time he
   hears or sees one again. When it runs out: "Nothing here... back to your chore."
-* **After a catch:** a new chore, plus 10 s of hunting in case another kid is close by.
+* **After a catch:** straight back to chore mode with a new chore. The grab itself (the kid
+  he's holding, whatever they dropped) doesn't count as hearing or seeing a kid, but another
+  kid nearby still does, and he can catch while he heads to his chore.
 * **Skipping chores:** he can ignore them, but once he's had enough time to walk there
   (plus 8 s) he's **skipping**: a red banner tells him, the kids see him through walls as a
   red silhouette, and he **can't catch anyone or search wardrobes**. Hearing or seeing kids
