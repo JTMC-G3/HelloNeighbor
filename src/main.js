@@ -610,8 +610,10 @@ class Game {
   }
 
   /** A noise the neighbor might hear. `by`: the player who made it, if any. */
-  emitNoise(pos, radius, by = null) {
-    this.noises.push({ pos: pos.clone(), radius, by });
+  emitNoise(pos, radius, by = null, owner = by) {
+    // `by`: whose body made it (footsteps, a door they opened: it tells where they are).
+    // `owner`: who's responsible for it at all (also what they threw, dropped or switched on).
+    this.noises.push({ pos: pos.clone(), radius, by, owner });
   }
 
   /** A message for one player (the local one, or sent to a remote one). */
@@ -809,6 +811,8 @@ class Game {
         break;
       }
       case 'app': {
+        const sw = w.appliances[i];
+        if (sw) sw.switchedBy = actor;
         const app = w.appliances[i];
         if (app) this.setAppliance(app, !app.on);
         break;
@@ -1062,7 +1066,7 @@ class Game {
         app.timer = 1.4;
         this.sfx.appliance(app.pos, app.kind);
         // Loud enough to draw him over from anywhere in the house (unless he's the one watching).
-        if (!app.byNeighbor) this.emitNoise(app.pos, 22);
+        if (!app.byNeighbor) this.emitNoise(app.pos, 22, null, app.switchedBy || null);
       }
     }
   }
@@ -1076,6 +1080,7 @@ class Game {
     }
     it.held = true;
     it.holder = actor.id;
+    it.lastHolder = actor;
     it.sleeping = true;
     it.thrown = false;
     it.vel.set(0, 0, 0);
@@ -1199,7 +1204,7 @@ class Game {
     this.release(it, false, true);
   }
 
-  breakWindow(win, dir) {
+  breakWindow(win, dir, owner = null) {
     if (win.broken) return;
     if (this.online && this.mp.isHost) this.mp.net.toAll({ k: 'win', i: win.index, d: [dir.x, dir.y, dir.z] });
     win.broken = true;
@@ -1207,7 +1212,7 @@ class Game {
     win.collider.enabled = false;
     this.sound.glass(win.center);
     // (On other players' screens this is just the effect: the host hears it.)
-    if (!this.online || this.mp.isHost) this.emitNoise(win.center, 30);
+    if (!this.online || this.mp.isHost) this.emitNoise(win.center, 30, null, owner);
     for (let i = 0; i < 22; i++) {
       const m = new THREE.Mesh(this.shardGeo, this.shardMat);
       const along = (Math.random() - 0.5) * win.w;
@@ -1249,7 +1254,7 @@ class Game {
         dt,
         (c, speed) => {
           if (speed > 3.5 && c.ref && !c.ref.broken) {
-            this.breakWindow(c.ref, it.vel);
+            this.breakWindow(c.ref, it.vel, it.lastHolder || null);
             it.vel.multiplyScalar(0.6);
             return true;
           }
@@ -1258,7 +1263,7 @@ class Game {
         (speed) => {
           if (speed > 2.2) {
             this.sfx.thud(it.pos, speed);
-            this.emitNoise(it.pos, Math.min(14, speed * 1.4));
+            this.emitNoise(it.pos, Math.min(14, speed * 1.4), null, it.lastHolder || null);
           }
         },
       );

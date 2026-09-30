@@ -557,7 +557,10 @@ export class Multiplayer {
    */
   neighborHears(nz) {
     const nid = this.neighborId;
-    if (nid < 0 || (nz.by && nz.by.role === 'neighbor')) return;
+    // Nothing he did himself counts: his footsteps and doors, or what he threw,
+    // dropped or switched on.
+    const owner = nz.owner || nz.by;
+    if (nid < 0 || (owner && owner.role === 'neighbor')) return;
     const g = this.game;
     if (!g.onProperty(nz.pos) || nz.pos.distanceTo(g.neighbor.pos) >= nz.radius) return;
     // Heard something: he may drop his chores and go look.
