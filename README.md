@@ -139,7 +139,7 @@ Up to 8 people can play in the same house. Press **Multiplayer** on the title sc
 | Mode | How it plays |
 | --- | --- |
 | **Co-op** | Everyone sneaks in together and the AI neighbor hunts all of you. Keys, doors and boards are shared, so one of you can distract him while another grabs a key. Whoever he catches wakes up back on the street; the others keep going. Anyone reaching the basement wins it for everybody. |
-| **Player neighbor** | One player **is** the neighbor (the host picks who, or Random). There's no AI. The kids win if anyone gets into the basement; the neighbor wins by catching kids 3 times per kid. |
+| **Player neighbor** | One player **is** the neighbor (the host picks who, or Random). There's no AI. The kids win if anyone gets into the basement; the neighbor wins by catching kids 8 times per kid. |
 
 Playing as the neighbor: you're a bit taller and slightly faster than the kids.
 **Click** grabs a kid in front of you, **E** on a wardrobe searches it (anyone hiding inside
@@ -148,6 +148,17 @@ crowbar. It's your house, so you can open **padlocked doors and the front door**
 doors still stop you). You can't leave your property, though: the front gate is as far as
 you go, and kids outside it can't be grabbed. A kid who hits you with a thrown object stuns
 you for a couple of seconds.
+
+**Chores (no camping):** like the AI neighbor, the neighbor player has chores. The HUD names
+the current one (e.g. "doing the dishes (kitchen)") and a green marker shows the spot. Stand
+there and it counts down (10-20 s), then the next one comes up. The kids see him doing it
+and hear its usual sounds, but they never get told which chore he's on.
+
+* **Hunting:** hearing or seeing a kid frees him to hunt for 25 s, topped up every time he
+  hears or sees one again. When it runs out: "Nothing here... back to your chore."
+* **After a catch:** a new chore, plus 10 s of hunting in case another kid is close by.
+* **Skipping chores:** he can ignore them, but once he's had enough time to walk there
+  (plus 8 s), the kids see him through walls as a red silhouette until he gets back to it.
 
 You hear the kids by the same rules as the AI neighbor: walking and crouching are silent,
 but running, landing from a jump, and doors, cupboards and pried-off boards near you give

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Net } from './net.js';
 import { Peer, PLAYER_COLORS, F, HeardMarks } from './avatar.js';
+import { CHORES } from './chores.js';
 
 /*
  * Multiplayer.
@@ -26,6 +27,12 @@ const STATES = ['patrol', 'task', 'investigate', 'chase', 'stunned', 'openCloset
 // World sounds everyone should hear (positional ones mostly).
 const SHARED_SOUNDS = new Set(['door', 'pry', 'thud', 'appliance', 'chore', 'grunt', 'alert']);
 const CATCHES_PER_KID = 8;
+// Versus: the neighbor player has chores to do (see updateDuty).
+const HUNT_TIME = 25; // free to hunt this long after hearing or seeing a kid
+const CATCH_SUSPICIOUS = 10; // ...and this long after catching one
+const CHORE_TIME = [10, 20];
+const TRAVEL_GRACE = 8; // extra seconds to get to a chore before he's "skipping" it
+const PLAYER_SKIPS = new Set(['nap', 'mow']); // too long / sends you to sleep
 const $ = (id) => document.getElementById(id);
 const r2 = (v) => Math.round(v * 100) / 100;
 const cleanName = (s) => String(s || '').replace(/[^\p{L}\p{N} _.'-]/gu, '').trim().slice(0, 16) || 'Player';
@@ -51,6 +58,10 @@ export class Multiplayer {
     this.released = new Map(); // item idx -> time we let go (ignore stale snapshots)
     this.npc = null; // latest neighbor state from the host
     this.vsGrab = -1; // versus: how long the neighbor has been grabbing someone
+    this.duty = null; // versus, host: the neighbor player's chore (see updateDuty)
+    this.dutyView = null; // versus, neighbor player: what the host says to do
+    this.skipping = false; // versus: the neighbor is skipping his chores (kids can see him)
+    this.tmpV = new THREE.Vector3();
     this.net.onMessage = (m) => this.onRelay(m);
     this.net.onClose = () => this.lost('Lost the connection to the game.');
     this.bindUi();
@@ -414,6 +425,10 @@ export class Multiplayer {
       case 'heard':
         this.showHeard(d);
         break;
+      case 'duty':
+        this.dutyView = d;
+        if (d.say) g.toast(String(d.say), 3000);
+        break;
       case 'end':
         g.mpEnd(d.who, d.text);
         break;
@@ -519,6 +534,12 @@ export class Multiplayer {
       const name = victim === this.game.player ? this.me.name : victim.name;
       const nid = this.neighborId;
       this.toastTo(nid === this.myId ? this.game.player : this.peers.get(nid), `Got ${name}! (${this.catches} / ${this.catchTarget})`, 2200);
+      // Back to the chores (a new one), but still on edge for a few seconds in case there's another kid.
+      if (this.duty) {
+        this.assignChore(this.duty.station);
+        this.duty.huntT = CATCH_SUSPICIOUS;
+        this.tellDuty(`Back to your chores: ${this.choreName(this.duty.station)}. You've got ${CATCH_SUSPICIOUS}s if you spot another kid.`);
+      }
       if (this.catches >= this.catchTarget) this.finish('neighbor', null, `The neighbor caught the kids ${this.catches} times.`);
     } else if (text) {
       this.game.toast(text, 2200);
@@ -535,6 +556,8 @@ export class Multiplayer {
     if (nid < 0 || (nz.by && nz.by.role === 'neighbor')) return;
     const g = this.game;
     if (!g.onProperty(nz.pos) || nz.pos.distanceTo(g.neighbor.pos) >= nz.radius) return;
+    // Heard something: he may drop his chores and go look.
+    this.hunt(HUNT_TIME);
     const kid = nz.by && nz.by.role === 'kid' ? nz.by : null;
     const msg = {
       k: 'heard',
@@ -567,7 +590,11 @@ export class Multiplayer {
     const g = this.game;
     for (const peer of this.peers.values()) peer.update(dt);
     if (this.heard) this.heard.update(dt);
-    if (this.mode === 'versus') this.updateVersusNeighbor(dt);
+    if (this.mode === 'versus') {
+      if (this.isHost && g.state !== 'ending' && g.state !== 'won') this.updateDuty(dt);
+      this.updateVersusNeighbor(dt);
+      this.updateVersusMarks();
+    }
     else if (!this.isHost) this.puppetNeighbor(dt);
     if (!this.isHost) this.smoothItems(dt);
 
@@ -620,7 +647,7 @@ export class Multiplayer {
       m ? r2(m.position.x) : 0, m ? r2(m.position.z) : 0, m ? r2(m.rotation.y) : 0,
       n.focus && n.focus.id !== undefined ? n.focus.id : -1,
     ];
-    s.g = [this.catches, this.catchTarget];
+    s.g = [this.catches, this.catchTarget, this.duty && this.duty.skipping ? 1 : 0];
 
     const bits = (arr, f) => arr.map((x) => (f(x) ? '1' : '0')).join('');
     const sections = {
@@ -666,6 +693,7 @@ export class Multiplayer {
     if (s.g) {
       this.catches = s.g[0];
       this.catchTarget = s.g[1];
+      this.setSkipping(!!s.g[2]);
     }
     if (s.d) {
       w.doors.forEach((d, i) => {
@@ -805,8 +833,19 @@ export class Multiplayer {
     const nid = this.neighborId;
     if (this.vsGrab >= 0) this.vsGrab += dt;
     if (this.vsGrab > 1.8) this.vsGrab = -1;
+    // Seen doing his chore (the host knows; everyone gets it in the snapshot).
+    const d = this.isHost ? this.duty : null;
+    const chore = d && d.huntT <= 0 && d.at ? d.station : null;
+    const taskT = d ? d.dur - d.t : 0;
     if (nid === this.myId) {
       // That's us: the model stays hidden (it would block the camera).
+      if (this.isHost) {
+        const p = g.player;
+        n.puppet(dt, {
+          x: p.pos.x, y: p.pos.y, z: p.pos.z, heading: p.yaw + Math.PI, speed: 0, state: 'patrol', awareness: 0,
+          station: chore, doing: true, taskT, grabbing: false, catchT: 0, focus: -1,
+        });
+      }
       n.model.root.visible = false;
       n.ch.pos.copy(g.player.pos);
       n.heading = g.player.yaw + Math.PI;
@@ -822,11 +861,184 @@ export class Multiplayer {
       if (!peer) return;
       n.puppet(dt, {
         x: peer.target.x, y: peer.target.y, z: peer.target.z, heading: peer.targetYaw + Math.PI, speed: peer.speed,
-        state: peer.stunned ? 'stunned' : 'patrol', awareness: 0, station: null,
+        state: peer.stunned ? 'stunned' : 'patrol', awareness: 0, station: chore, doing: true, taskT,
         grabbing: this.vsGrab >= 0, catchT: Math.max(0, this.vsGrab), focus: -1,
       });
     } else {
       this.puppetNeighbor(dt);
+    }
+  }
+
+  // ----------------------------------------------------- versus: chore duty
+  /*
+   * Stops the neighbor player camping one spot: like the AI neighbor he has
+   * chores to do. He's only free to hunt for HUNT_TIME seconds after hearing
+   * or seeing a kid (topped up whenever he does again). When that runs out
+   * he's sent back to his chore. After a catch he gets a new chore plus
+   * CATCH_SUSPICIOUS seconds of hunting. He *can* ignore his chores, but then
+   * the kids see him through walls until he gets back to them.
+   */
+  neighborPlayer() {
+    const nid = this.neighborId;
+    return nid === this.myId ? this.game.player : this.peers.get(nid);
+  }
+
+  choreName(st) {
+    if (!st) return 'nothing';
+    const label = CHORES[st.type].label;
+    const room = st.room >= 0 ? this.game.world.plan.rooms[st.room] : null;
+    const where = room ? `${room.type}${room.floor ? ', upstairs' : ''}` : 'outside';
+    return `${label} (${where})`;
+  }
+
+  /** Seconds to walk from the neighbor player to chore spot `st`. */
+  travelTime(st) {
+    const g = this.game;
+    const np = this.neighborPlayer();
+    if (!np || !st.via) return 20;
+    const from = g.nav.nearest(np.pos);
+    const ids = g.nav.path(from, st.via);
+    if (!ids) return 30;
+    let len = np.pos.distanceTo(g.nav.pos(ids[0])) + g.nav.pos(ids[ids.length - 1]).distanceTo(st.stand);
+    for (let i = 1; i < ids.length; i++) len += g.nav.pos(ids[i - 1]).distanceTo(g.nav.pos(ids[i]));
+    return len / 3.4;
+  }
+
+  assignChore(prev) {
+    const g = this.game;
+    const home = g.world.navData.home;
+    const list = g.neighbor.stations.filter((s) => !PLAYER_SKIPS.has(s.type) && CHORES[s.type] && s !== prev && s.via && g.nav.path(home, s.via));
+    const st = list.length ? list[(Math.random() * list.length) | 0] : null;
+    const d = this.duty || (this.duty = { huntT: 0, skipping: false, at: false });
+    d.station = st;
+    d.dur = CHORE_TIME[0] + Math.random() * (CHORE_TIME[1] - CHORE_TIME[0]);
+    d.t = d.dur;
+    d.away = 0;
+    d.allow = st ? this.travelTime(st) + TRAVEL_GRACE : Infinity;
+    d.soundT = 0;
+    d.sent = 0;
+  }
+
+  hunt(seconds) {
+    if (this.mode !== 'versus' || !this.duty) return;
+    if (this.duty.huntT <= 0) this.tellDuty('Something\'s up. Go and look!');
+    this.duty.huntT = Math.max(this.duty.huntT, seconds);
+    this.duty.skipping = false;
+  }
+
+  /** Host: send the neighbor player their duty (and optionally a message). */
+  tellDuty(say) {
+    const d = this.duty;
+    if (!d) return;
+    const st = d.station;
+    const msg = {
+      k: 'duty',
+      l: this.choreName(st),
+      p: st ? [r2(st.stand.x), r2(st.stand.y), r2(st.stand.z)] : null,
+      t: Math.ceil(d.t),
+      h: Math.ceil(Math.max(0, d.huntT)),
+      sk: d.skipping ? 1 : 0,
+      at: d.at ? 1 : 0,
+    };
+    if (say) msg.say = say;
+    const nid = this.neighborId;
+    if (nid === this.myId) {
+      this.dutyView = msg;
+      if (say) this.game.toast(say, 3000);
+    } else if (nid >= 0) {
+      this.net.to(nid, msg);
+    }
+  }
+
+  updateDuty(dt) {
+    const g = this.game;
+    const np = this.neighborPlayer();
+    if (!np) return;
+    if (!this.duty) {
+      this.assignChore(null);
+      this.tellDuty(`Your chore: ${this.choreName(this.duty.station)}. Follow the green marker.`);
+    }
+    const d = this.duty;
+    // Seeing a kid (on his property, not hidden) keeps him on the hunt.
+    const n = g.neighbor;
+    const kids = [g.player, ...this.peers.values()].filter((k) => k.role === 'kid');
+    for (const k of kids) {
+      const caught = k === g.player ? g.state === 'caught' : k.caughtAnim;
+      if (caught || k.hidden || !g.onProperty(k.pos)) continue;
+      if (n.canSee(k)) {
+        this.hunt(HUNT_TIME);
+        break;
+      }
+    }
+    let changed = false;
+    if (d.huntT > 0) {
+      d.huntT -= dt;
+      d.at = false;
+      if (d.huntT <= 0) {
+        d.away = 0;
+        d.allow = d.station ? this.travelTime(d.station) + TRAVEL_GRACE : Infinity;
+        this.tellDuty(`Nothing here... back to ${this.choreName(d.station)}.`);
+      }
+    } else if (d.station) {
+      const s = d.station.stand;
+      const at = Math.hypot(np.pos.x - s.x, np.pos.z - s.z) < 1.6 && Math.abs(np.pos.y - s.y) < 1.2;
+      if (at !== d.at) changed = true;
+      d.at = at;
+      if (at) {
+        d.t -= dt;
+        d.away = 0;
+        // The chore makes its usual noise (the kids can hear where he is).
+        const snd = CHORES[d.station.type].sound;
+        if (snd) {
+          d.soundT -= dt;
+          if (d.soundT <= 0) {
+            d.soundT = snd[1] * (0.8 + Math.random() * 0.4);
+            g.sfx.chore(snd[0], s);
+          }
+        }
+        if (d.t <= 0) {
+          this.assignChore(d.station);
+          this.tellDuty(`Done! Next: ${this.choreName(d.station)}.`);
+        }
+      } else {
+        d.away += dt;
+      }
+    }
+    const skipping = d.huntT <= 0 && !!d.station && !d.at && d.away > d.allow;
+    if (skipping !== d.skipping) {
+      d.skipping = skipping;
+      changed = true;
+      if (skipping) this.tellDuty('Get back to your chores! The kids can see you until you do.');
+    }
+    if (this.neighborId !== this.myId) this.setSkipping(skipping);
+    d.sent -= dt;
+    if (changed || d.sent <= 0) {
+      d.sent = 0.25;
+      this.tellDuty();
+    }
+  }
+
+  /** Kids: the neighbor is skipping his chores, so they can see him. */
+  setSkipping(on) {
+    if (on && !this.skipping && this.me && this.me.role === 'kid') this.game.toast('The neighbor is skipping his chores! You can see him through the walls.', 3500);
+    this.skipping = on;
+  }
+
+  marks() {
+    if (!this.heard) this.heard = new HeardMarks(this.game);
+    return this.heard;
+  }
+
+  updateVersusMarks() {
+    const me = this.me;
+    if (!me) return;
+    if (me.role === 'neighbor') {
+      const v = this.dutyView;
+      const pos = v && v.p && v.h <= 0 ? this.tmpV.set(v.p[0], v.p[1], v.p[2]) : null;
+      if (pos || this.heard) this.marks().setBeacon('chore', pos, { color: '#4cd964', label: 'Chore' });
+    } else {
+      const pos = this.skipping ? this.game.neighbor.pos : null;
+      if (pos || this.heard) this.marks().setBeacon('neighbor', pos, { color: '#ff3b30', label: 'Neighbor', figure: true });
     }
   }
 

@@ -276,6 +276,50 @@ export class HeardMarks {
     this.canvas.classList.remove('hidden');
     this.v = new THREE.Vector3();
     this.drawn = false;
+    this.beacons = new Map(); // key -> mark that stays until moved or hidden
+  }
+
+  /**
+   * A mark that stays put until moved or hidden (`pos` null): a see-through
+   * figure (`figure: true`) or a light beam with a ring, plus a label. Used
+   * for the neighbor's chore spot, and for kids seeing a neighbor who's
+   * skipping his chores.
+   */
+  setBeacon(key, pos, { color = '#4cd964', label = '', figure = false } = {}) {
+    let b = this.beacons.get(key);
+    if (!pos) {
+      if (b) b.root.visible = false;
+      return;
+    }
+    if (!b) {
+      const root = new THREE.Group();
+      const mat = this.overlay(color, 0.7);
+      if (figure) {
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 1.35, 12), mat);
+        body.position.y = 0.9;
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), mat);
+        head.position.y = 1.8;
+        root.add(body, head);
+      } else {
+        const ring = new THREE.Mesh(this.ringGeo, mat);
+        ring.scale.setScalar(0.8);
+        ring.position.y = 0.05;
+        root.add(ring);
+      }
+      root.add(new THREE.Mesh(this.beamGeo, this.overlay(color, 0.35)));
+      if (label) {
+        const tag = nameTag(label, color);
+        tag.material.depthTest = false;
+        tag.position.y = figure ? 2.3 : 1.6;
+        root.add(tag);
+      }
+      root.traverse((o) => { o.renderOrder = 991; });
+      this.group.add(root);
+      b = { root, mat, color, label, t: 0 };
+      this.beacons.set(key, b);
+    }
+    b.root.position.copy(pos);
+    b.root.visible = true;
   }
 
   overlay(color, opacity) {
@@ -357,6 +401,11 @@ export class HeardMarks {
         m.tag.userData.setText(secs < 1 ? `${m.name}?` : `${m.name}? · ${secs}s`);
       }
     }
+    for (const b of this.beacons.values()) {
+      if (!b.root.visible) continue;
+      b.t += dt;
+      b.mat.opacity = 0.6 + 0.25 * Math.sin(b.t * 4);
+    }
     for (const r of this.rings) {
       if (!r.root.visible) continue;
       r.t += dt;
@@ -392,6 +441,7 @@ export class HeardMarks {
     const marks = [];
     for (const m of this.kids.values()) if (m.root.visible) marks.push({ pos: m.root.position, y: 1.2, color: m.color, label: m.name });
     for (const r of this.rings) if (r.root.visible) marks.push({ pos: r.root.position, y: 0.5, color: RING_COLOR, label: '' });
+    for (const b of this.beacons.values()) if (b.root.visible) marks.push({ pos: b.root.position, y: 1, color: b.color, label: b.label });
     if (!marks.length) return;
     const margin = 36;
     for (const mk of marks) {

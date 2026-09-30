@@ -1508,9 +1508,18 @@ class Game {
     const mp = this.mp;
     let text;
     if (mp.mode === 'versus') {
-      text = this.role === 'neighbor'
-        ? `You're the NEIGHBOR · caught ${mp.catches} / ${mp.catchTarget} · Click: grab · E: search wardrobes`
-        : `Kids caught: ${mp.catches} / ${mp.catchTarget} · get into the basement!`;
+      const d = mp.dutyView;
+      if (this.role === 'neighbor') {
+        const score = `caught ${mp.catches} / ${mp.catchTarget}`;
+        if (!d) text = `You're the NEIGHBOR · ${score}`;
+        else if (d.h > 0) text = `HUNTING · ${d.h}s · ${score} · Click: grab · E: search wardrobes`;
+        else if (d.sk) text = `Get back to your chore: ${d.l}! The kids can see you`;
+        else if (d.at) text = `Doing your chore: ${d.l} · ${d.t}s left · ${score}`;
+        else text = `Chore: ${d.l} · follow the green marker · ${score}`;
+      } else {
+        text = `Kids caught: ${mp.catches} / ${mp.catchTarget} · get into the basement!`;
+        if (mp.skipping) text = `The neighbor is skipping his chores: you can see him! · ${text}`;
+      }
       if (this.stunned > 0) text = 'STUNNED!';
     } else {
       text = `Co-op · ${mp.roster.size} player${mp.roster.size === 1 ? '' : 's'} · room ${mp.net.code}`;
