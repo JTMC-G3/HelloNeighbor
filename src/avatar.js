@@ -104,6 +104,23 @@ function nameTag(text, color) {
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
 const UP = new THREE.Vector3(0, 1, 0);
 const DOWN = new THREE.Vector3(0, -1, 0);
+const aimTmp = new THREE.Vector3();
+
+/**
+ * Points a model's arms at a VR player's real hands: `hands` is
+ * [lx, ly, lz, rx, ry, rz] relative to their feet at `pos`, facing `yaw`.
+ * Works for the kid and the neighbor models (both face +z, so the right
+ * arm, arms[0], is on the -x side).
+ */
+export function aimArms(m, hands, yaw, pos) {
+  m.root.updateMatrixWorld(true);
+  for (const [side, arm] of [[0, m.arms[1]], [1, m.arms[0]]]) {
+    const v = aimTmp.set(hands[side * 3], hands[side * 3 + 1], hands[side * 3 + 2]).applyAxisAngle(UP, yaw).add(pos);
+    m.torso.worldToLocal(v).sub(arm.position);
+    if (v.lengthSq() < 1e-4) continue;
+    arm.quaternion.setFromUnitVectors(DOWN, v.normalize());
+  }
+}
 
 export class Peer {
   constructor(game, info) {
@@ -131,7 +148,6 @@ export class Peer {
     this.handsTarget = null;
     this.handsNow = null;
     this.vrTagged = false;
-    this.tmp = new THREE.Vector3();
     if (this.role === 'kid') {
       this.model = buildKid(info.color);
       this.tag = nameTag(info.name, info.color);
@@ -201,6 +217,11 @@ export class Peer {
     const moved = Math.hypot(this.ch.pos.x - this.lastPos.x, this.ch.pos.z - this.lastPos.z);
     this.speed += ((dt > 0 ? moved / dt : 0) - this.speed) * Math.min(1, dt * 8);
     this.ch.vel.set((this.ch.pos.x - this.lastPos.x) / (dt || 1), 0, (this.ch.pos.z - this.lastPos.z) / (dt || 1));
+    // VR hands are smoothed here even with no model: the neighbor model uses them too.
+    if (this.handsNow) {
+      const kh = Math.min(1, dt * 15);
+      for (let i = 0; i < 6; i++) this.handsNow[i] += (this.handsTarget[i] - this.handsNow[i]) * kh;
+    }
     if (!this.model) return;
 
     const m = this.model;
@@ -234,7 +255,7 @@ export class Peer {
       this.vrTagged = this.inVR;
       this.tag.userData.setText(this.inVR ? `${this.name} · VR` : this.name);
     }
-    if (this.handsNow && !this.caughtAnim) this.reachArms(dt);
+    if (this.handsNow && !this.caughtAnim) this.reachArms();
 
     // Footsteps you can hear (running is loudest; crouch-walking is silent).
     if (sp > 0.8 && !this.crouching && Math.abs(this.ch.pos.y - this.lastPos.y) < 0.2) {
@@ -246,22 +267,10 @@ export class Peer {
     }
   }
 
-  /**
-   * VR players: point the arms at where their real hands are. (The model faces
-   * +z, so its right arm, arms[0], is on the -x side.)
-   */
-  reachArms(dt) {
+  /** VR players: point the arms at where their real hands are. */
+  reachArms() {
     const m = this.model;
-    const k = Math.min(1, dt * 15);
-    for (let i = 0; i < 6; i++) this.handsNow[i] += (this.handsTarget[i] - this.handsNow[i]) * k;
-    m.root.updateMatrixWorld(true);
-    for (const [side, arm] of [[0, m.arms[1]], [1, m.arms[0]]]) {
-      const h = this.handsNow;
-      const v = this.tmp.set(h[side * 3], h[side * 3 + 1], h[side * 3 + 2]).applyAxisAngle(UP, this.yaw).add(this.ch.pos);
-      m.torso.worldToLocal(v).sub(arm.position);
-      if (v.lengthSq() < 1e-4) continue;
-      arm.quaternion.setFromUnitVectors(DOWN, v.normalize());
-    }
+    aimArms(m, this.handsNow, this.yaw, this.ch.pos);
     // Whatever they're holding goes in the hand they're holding it with.
     if (this.held) {
       const hand = m.hands[this.flags & F.leftHand ? 1 : 0];

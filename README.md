@@ -244,7 +244,9 @@ neighbor.
   neighbor. Your chore, the score and the "skipping chores" warning are in your headset HUD.
 * **What everyone else sees:** a VR player's avatar turns with their head, and its arms follow
   their real hands, so you can see them reach, wave and wind up a throw. Their name tag says
-  "VR". Thrown items fly at the speed of the real throw, for everyone.
+  "VR". The same goes for a VR neighbor: his arms follow the player's hands (except while
+  he's grabbing someone or sitting or lying down for a chore). Thrown items fly at the speed
+  of the real throw, for everyone.
 * **Haptics online:** the heartbeat only kicks in when the AI neighbor is chasing *you*. Against
   a player neighbor it beats when he's close (and you're on his property).
 

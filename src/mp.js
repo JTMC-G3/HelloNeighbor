@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Net } from './net.js';
-import { Peer, PLAYER_COLORS, F, HeardMarks } from './avatar.js';
+import { Peer, PLAYER_COLORS, F, HeardMarks, aimArms } from './avatar.js';
 import { CHORES } from './chores.js';
 
 /*
@@ -877,8 +877,8 @@ export class Multiplayer {
       return;
     }
     n.model.root.visible = true;
+    const peer = this.peers.get(nid);
     if (this.isHost) {
-      const peer = this.peers.get(nid);
       if (!peer) return;
       n.puppet(dt, {
         x: peer.target.x, y: peer.target.y, z: peer.target.z, heading: peer.targetYaw + Math.PI, speed: peer.speed,
@@ -888,6 +888,11 @@ export class Multiplayer {
     } else {
       this.puppetNeighbor(dt);
     }
+    // Playing him in VR: his arms follow the player's real hands, like the kids' do
+    // (but not while he's grabbing someone, or sitting / lying down for a chore).
+    const t = n.task;
+    const planted = t && t.phase === 'do' && t.chore.fixed;
+    if (peer && peer.handsNow && !n.grabbing && !planted) aimArms(n.model, peer.handsNow, n.heading - Math.PI, n.ch.pos);
   }
 
   // ----------------------------------------------------- versus: chore duty
