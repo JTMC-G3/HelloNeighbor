@@ -67,6 +67,8 @@ then be live at `https://<user>.github.io/<repo>/`.
 
 To build a static copy yourself, run `npm run build`. The output goes to `dist/` and can be
 hosted on any static web server. It has to be served over HTTP, not opened as a `file://`.
+GitHub Pages and other static hosts are single-player only: multiplayer needs the game
+server (see below).
 
 ---
 
@@ -83,7 +85,9 @@ hosted on any static web server. It has to be served over HTTP, not opened as a 
 | **Left click** | Throw held item |
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
-| **Esc** / **P** | Pause (sensitivity, volume, restart) |
+| **Ctrl+W** | Won't close the game by accident: the browser asks "Leave site?" first, and in **Fullscreen** (tick it on the title screen or pause menu; Chrome/Edge) it does nothing at all |
+| **M** | Capture the mouse again, if the browser refused (it often does right after Esc) |
+| **Esc** / **P** | Pause (sensitivity, volume, restart). In multiplayer it opens the menu without pausing |
 | **`** | Debug mode on / off (see below) |
 
 Click the game to capture the mouse.
@@ -96,6 +100,7 @@ There are no objectives or hints. Exploring and figuring things out is the game.
   but he'll hear the glass.
 * He patrols the house and yard. The **eye** at the top of the screen shows how suspicious
   he is. When it turns red he's chasing you, so break line of sight or get off his property.
+  He never leaves his yard: once you're out of his front gate he can't follow you home.
 * Walking and crouching are silent. Running makes a little noise if he's close by.
 * Cupboards, fridges and chests open, and things are often tucked away inside.
 * You can hide in wardrobes. If he watched you climb in, he'll yank the doors open and drag
@@ -114,6 +119,74 @@ Each house has a number, shown in the pause menu and on the end screen. **Restar
 house** / **Replay this house** play the same one again. To share a house, add `?seed=` and
 its number to the address, e.g. `http://localhost:5173/?seed=123456`. **New house** generates
 a fresh one.
+
+---
+
+## 👥 Multiplayer
+
+Up to 8 people can play in the same house. Press **Multiplayer** on the title screen:
+
+1. Everyone opens the **same game address**: the Cloudflare link from `npm run share`
+   (easiest for friends elsewhere), your Codespace's forwarded port, or
+   `http://<your-computer's-IP>:5173` on the same Wi-Fi.
+2. One person types their name and presses **Host a game**. They get a 4-letter room
+   code (and a **Copy invite link** button).
+3. Everyone else types the code and presses **Join**. If they had a different house
+   loaded, the page reloads into the host's house and rejoins by itself.
+4. The host picks a mode and presses **Start**. People can also join a game that's
+   already running.
+
+| Mode | How it plays |
+| --- | --- |
+| **Co-op** | Everyone sneaks in together and the AI neighbor hunts all of you. Keys, doors and boards are shared, so one of you can distract him while another grabs a key. Whoever he catches wakes up back on the street; the others keep going. Anyone reaching the basement wins it for everybody. |
+| **Player neighbor** | One player **is** the neighbor (the host picks who, or Random). There's no AI. The kids win if anyone gets into the basement; the neighbor wins by catching kids 8 times per kid. |
+
+Playing as the neighbor: you're a bit taller and slightly faster than the kids.
+**Click** grabs a kid in front of you, **E** on a wardrobe searches it (anyone hiding inside
+is caught), and you can open doors and throw things, but you can't pick up keys or the
+crowbar. It's your house, so you can open **padlocked doors and the front door** (boarded-up
+doors still stop you). You can't leave your property, though: the front gate is as far as
+you go, and kids outside it can't be grabbed. A kid who hits you with a thrown object stuns
+you for a couple of seconds.
+
+**Chores (no camping):** like the AI neighbor, the neighbor player has chores. The HUD names
+the current one (e.g. "doing the dishes (kitchen)") and a green marker shows the spot. Stand
+there and it counts down (10-20 s). Then he gets a **15 s break** (free to roam and catch
+kids, no skipping) before the next chore comes up. The kids see him doing it
+and hear its usual sounds, but they never get told which chore he's on.
+
+* **Hunting:** hearing or seeing a kid frees him to hunt for 25 s, topped up every time he
+  hears or sees one again. Noises he makes himself never count: his footsteps and doors,
+  or anything he threw, dropped or switched on (a radio left playing won't keep him hunting). When it runs out: "Nothing here... back to your chore."
+* **After a catch:** straight back to chore mode with a new chore. The grab itself (the kid
+  he's holding, whatever they dropped) doesn't count as hearing or seeing a kid, but another
+  kid nearby still does, and he can catch while he heads to his chore.
+* **Skipping chores:** he can ignore them, but once he's had enough time to walk there
+  (plus 8 s) he's **skipping**: a red banner tells him, the kids see him through walls as a
+  red silhouette, and he **can't catch anyone or search wardrobes**. Hearing or seeing kids
+  doesn't get him out of it either; only going back to his chore does. So camping the
+  basement door just gets him spotted, and catches nobody.
+
+You hear the kids by the same rules as the AI neighbor: walking and crouching are silent,
+but running, landing from a jump, and doors, cupboards and pried-off boards near you give
+them away (only on your property). When you hear a kid, a see-through silhouette in their
+colour marks where they were, visible through walls, with a timer ("Bea? · 12s"). It stays
+until you hear that kid again (it moves) or catch them. Other noises (something thrown
+landing, breaking glass, a TV left on) show a bright pulsing ring with a light beam for 8
+seconds. Anything behind you or off-screen gets an arrow at the edge of your screen.
+
+Notes:
+
+* The host's browser runs the game for everyone, so the host should have the fastest
+  computer and a steady connection. If the host leaves, the game ends for everyone.
+* **Esc** opens the menu but doesn't pause the game for anyone else.
+* Debug mode only works for the host of a co-op game.
+* On **Codespaces**, forwarded ports are private by default. For friends to join, right-click
+  port `5173` in the **Ports** panel and set **Port Visibility → Public**, then share that
+  address.
+* The server part is small: [`server/relay.js`](server/relay.js) runs inside the Vite dev
+  and preview servers on `/mp` (same port as the game) and just passes messages between
+  the host and everyone else.
 
 ---
 
@@ -150,6 +223,30 @@ What's different in VR:
 * **HUD in the headset:** prompts, messages, his awareness, and wardrobe slats while hiding.
 * **Comfort:** the game never turns or rolls your view for you. Standalone headsets drop to
   the Low preset automatically, and PC VR is capped at Medium.
+
+### VR in multiplayer (crossplay)
+
+Headset and desktop players can share a game, in either mode, and anyone can be the
+neighbor.
+
+* **Joining in VR:** open the game in the headset's browser, press **Multiplayer**, host or
+  join as usual, then press **Play in VR** in the lobby. You wait out on the street with the
+  room code and the players in your headset. When the host starts, you're in. If the host is
+  in VR, they pull a trigger to start (after picking the mode on the screen). If joining
+  reloads the page into the host's house, the headset session ends: press **Play in VR**
+  again once you're back in the lobby.
+* **Switching mid-game:** taking the headset off opens the menu (the game keeps going for
+  everyone else). **Resume in VR** puts you back in.
+* **Playing the neighbor in VR:** reach for a kid and squeeze **Grip** (or pull the right
+  **Trigger** at nothing) to grab them. Your laser turns yellow and the HUD says
+  "GRAB ..." when one's in reach. **Trigger** on a wardrobe searches it. Your keys work on
+  padlocked doors and the front door. You stand a little taller than in real life, like the
+  neighbor. Your chore, the score and the "skipping chores" warning are in your headset HUD.
+* **What everyone else sees:** a VR player's avatar turns with their head, and its arms follow
+  their real hands, so you can see them reach, wave and wind up a throw. Their name tag says
+  "VR". Thrown items fly at the speed of the real throw, for everyone.
+* **Haptics online:** the heartbeat only kicks in when the AI neighbor is chasing *you*. Against
+  a player neighbor it beats when he's close (and you're on his property).
 
 ---
 
@@ -247,6 +344,10 @@ src/quality.js        Graphics presets, device detection, material swap, mesh ba
 src/audio.js          Web Audio synthesized sound effects and chase music
 src/textures.js       Procedural canvas textures
 src/items.js          Throwable props and keys
+src/mp.js             Multiplayer: lobby, host snapshots, applying them on the other players
+src/net.js            WebSocket connection to the relay
+src/avatar.js         Other players (kid models, name tags, smoothing, VR players' arms)
+server/relay.js       Multiplayer relay (rooms + message passing), plugged into Vite on /mp
 .devcontainer/        GitHub Codespaces configuration
 ```
 

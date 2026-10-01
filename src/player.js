@@ -35,6 +35,24 @@ export class Player {
     this.roll = 0;
     this.moving = false;
     this.vr = null; // VR controller (vr.js) while in a headset
+    this.body = { standH: STAND_H, standEye: STAND_EYE, walk: 3.7, sprint: 6.2, canCrouch: true };
+  }
+
+  /** Change size and speed (multiplayer: playing as the neighbor). */
+  setBody(opts) {
+    Object.assign(this.body, opts);
+    if (opts.radius) this.ch.radius = opts.radius;
+    this.ch.height = this.body.standH;
+    this.eyeH = this.body.standEye;
+  }
+
+  /**
+   * VR: how much to raise the play space above your real height. A kid's body
+   * matches a grown-up's real height closely enough (0), but playing the
+   * (taller) neighbor lifts you a little so you look down on the kids.
+   */
+  get vrLift() {
+    return this.body.standEye - STAND_EYE;
   }
 
   get pos() {
@@ -45,6 +63,11 @@ export class Player {
     // In VR your eyes are wherever your head actually is (duck for real to hide!).
     if (this.vr) return this.vr.headWorld(out);
     return out.set(this.ch.pos.x, this.ch.pos.y + this.eyeH, this.ch.pos.z);
+  }
+
+  /** Where you're looking: { yaw, pitch } (in VR, where your head is really pointed). */
+  facing() {
+    return this.vr ? this.vr.look() : { yaw: this.yaw, pitch: this.pitch };
   }
 
   forward(out = new THREE.Vector3()) {
@@ -58,8 +81,8 @@ export class Player {
     this.pitch = 0;
     this.camY = p.y + this.eyeH;
     this.crouching = false;
-    this.ch.height = STAND_H;
-    this.eyeH = STAND_EYE;
+    this.ch.height = this.body.standH;
+    this.eyeH = this.body.standEye;
     this.camOffset.set(0, 0, 0);
     this.roll = 0;
     this.syncCamera(0);
@@ -81,11 +104,12 @@ export class Player {
     if (k.has('ArrowDown')) this.pitch = Math.max(-1.5, this.pitch - lookSpeed);
 
     const vi = this.vr ? this.vr.input : null;
-    const wantCrouch = vi ? vi.crouch || this.vr.headHeight() < 1.15 : k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight');
+    const b = this.body;
+    const wantCrouch = b.canCrouch && (vi ? vi.crouch || this.vr.headHeight() < 1.15 : k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight'));
     if (wantCrouch) this.crouching = true;
-    else if (this.crouching && !this.physics.blockedAbove(this.ch, STAND_H)) this.crouching = false;
-    this.ch.height = this.crouching ? CROUCH_H : STAND_H;
-    const targetEye = this.crouching ? CROUCH_EYE : STAND_EYE;
+    else if (this.crouching && !this.physics.blockedAbove(this.ch, b.standH)) this.crouching = false;
+    this.ch.height = this.crouching ? CROUCH_H : b.standH;
+    const targetEye = this.crouching ? CROUCH_EYE : b.standEye;
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * 12);
 
     // Thumbstick in VR (partial tilt = slower), keys on desktop.
@@ -102,7 +126,7 @@ export class Player {
       wz /= wl;
     }
     this.sprinting = (vi ? vi.sprint && wl > 0.3 : (k.has('ShiftLeft') || k.has('ShiftRight')) && f > 0) && !this.crouching;
-    const speed = this.crouching ? 1.9 : this.sprinting ? 6.2 : 3.7;
+    const speed = this.crouching ? 1.9 : this.sprinting ? b.sprint : b.walk;
     const accel = this.ch.onGround ? 14 : 3;
     const blend = Math.min(1, accel * dt);
     this.ch.vel.x += (wx * speed - this.ch.vel.x) * blend;

@@ -16,6 +16,13 @@ import * as THREE from 'three';
  *   A / X        jump                B / Y  crouch toggle (or just duck)
  *   Left trigger (pointing at nothing) toggles the flashlight in your left hand
  *
+ * Multiplayer (crossplay with desktop players, see mp.js):
+ *   Playing the neighbor: Grip (or the right trigger) on nothing grabs the kid
+ *     your hand is reaching for. Trigger on a wardrobe searches it.
+ *   Waiting in the lobby in the headset: the host pulls a trigger to start.
+ *   Your head and hands are sent to everyone, so they see where you look
+ *   and what your arms are doing.
+ *
  * Debug mode:
  *   Click BOTH sticks at once   debug mode on / off
  *   Hold the LEFT stick in, then on the right controller:
@@ -174,8 +181,9 @@ export class VR {
     this.slats.visible = false;
   }
 
-  toast(text) {
-    this.toasts.push({ text, t: 3.2 });
+  toast(text, ms = 3200) {
+    if (this.toasts.some((t) => t.text === text)) return;
+    this.toasts.push({ text, t: Math.max(2, ms / 1000) });
     if (this.toasts.length > 2) this.toasts.shift();
   }
 
@@ -184,15 +192,21 @@ export class VR {
     for (const t of this.toasts) t.t -= dt;
     this.toasts = this.toasts.filter((t) => t.t > 0);
     const n = g.neighbor;
-    const chase = n.state === 'chase' || n.state === 'openCloset';
-    const aw = Math.round((chase ? 1 : n.awareness) * 20);
+    // Playing against a person (or as him), there's no awareness eye.
+    const versus = g.online && g.mp.mode === 'versus';
+    const chase = !versus && (n.state === 'chase' || n.state === 'openCloset');
+    const aw = versus ? 0 : Math.round((chase ? 1 : n.awareness) * 20);
     const target = this.promptHand ? this.promptText(this.promptHand.target) : '';
     const caught = !$('caughtText').classList.contains('hidden');
     const ending = g.state === 'ending';
+    const endText = ending && g.endInfo ? (g.endInfo.who === 'kids' ? 'TO BE CONTINUED...' : 'GAME OVER') : 'TO BE CONTINUED...';
     const held = g.player.held ? g.player.held.name : '';
     const banner = g.altView() ? g.debug.bannerText() : '';
     const shift = this.debugShift;
-    const key = [aw, chase, target, caught, ending, held, g.player.hidden ? 1 : 0, banner, shift, this.toasts.map((t) => t.text).join('|')].join('#');
+    const status = g.online && g.state !== 'menu' ? g.mpStatusText || '' : '';
+    const skip = g.online ? g.skipText || '' : '';
+    const lobby = g.state === 'menu' ? this.lobbyText() : null;
+    const key = [aw, chase, target, caught, ending, endText, held, g.player.hidden ? 1 : 0, banner, shift, status, skip, lobby && lobby.join('/'), this.toasts.map((t) => t.text).join('|')].join('#');
     if (key === this.hudKey) return;
     this.hudKey = key;
 
@@ -212,7 +226,12 @@ export class VR {
       ctx.fillStyle = color;
       ctx.fillText(text, W / 2, y);
     };
-    if (caught) {
+    if (lobby) {
+      // Waiting in the multiplayer lobby with the headset on.
+      pill(lobby[0], 70, 40, '#fff', 'rgba(108,75,216,0.9)');
+      lobby.slice(1).forEach((t, i) => pill(t, 150 + i * 50, 28));
+      this.toasts.forEach((t, i) => pill(t.text, 420 + i * 44, 24));
+    } else if (caught) {
       ctx.font = 'bold 150px Impact, Arial Black, sans-serif';
       ctx.fillStyle = '#fff';
       ctx.strokeStyle = '#a5391a';
@@ -222,7 +241,8 @@ export class VR {
     } else if (ending) {
       ctx.font = 'bold 90px Impact, Arial Black, sans-serif';
       ctx.fillStyle = '#fff';
-      ctx.fillText('TO BE CONTINUED...', W / 2, H / 2);
+      ctx.fillText(endText, W / 2, H / 2);
+      this.toasts.forEach((t, i) => pill(t.text, H / 2 + 100 + i * 44, 24));
     } else if (banner || shift) {
       // Debug camera / debug controls: say what the buttons do.
       if (banner) {
@@ -244,6 +264,9 @@ export class VR {
         ctx.fillRect(W / 2 - 108, 20, (216 * aw) / 20, 12);
         if (chase) pill('HE SEES YOU - RUN!', 70, 34, '#fff', 'rgba(180,20,20,0.8)');
       }
+      // Multiplayer: the score / your chore, and the "skipping chores" warning.
+      if (skip) pill(`SKIPPING CHORES! Get back to ${skip}`, chase ? 120 : 70, 26, '#fff', 'rgba(200,30,30,0.9)');
+      else if (status) pill(status.length > 70 ? `${status.slice(0, 68)}…` : status, chase ? 120 : 70, 22, '#fff', 'rgba(20,20,30,0.7)');
       if (target) pill(target, 190, 42);
       if (held) pill(`Holding: ${held}  ·  let go of grip while swinging to throw`, 260, 26, '#ffd166');
       if (g.player.hidden) pill('Hiding  ·  trigger to climb out', 260, 30);
@@ -255,17 +278,37 @@ export class VR {
   promptText(t) {
     const g = this.game;
     if (!t) return '';
-    if (t.item) return `Grip: grab ${t.item.name}   ·   Trigger: pick up`;
+    const neighbor = g.role === 'neighbor';
+    if (t.kid) return `Grip: GRAB ${t.kid.name}!`;
+    if (t.item) {
+      if (neighbor && t.item.important) return `${t.item.name} (you don't need that)`;
+      return `Grip: grab ${t.item.name}   ·   Trigger: pick up`;
+    }
     if (t.door) {
-      const lock = g.usableLock(t.door);
+      const d = t.door;
+      const lock = g.usableLock(d);
       if (lock) return lock.type === 'key' ? `Trigger: use ${g.player.held.name}` : 'Trigger: pry the boards off';
-      if (t.door.locked && !t.door.open) return `${t.door.name} (${t.door.boarded ? 'boarded up' : 'locked'})`;
-      return `Trigger: ${t.door.open ? 'close' : 'open'} ${t.door.name}`;
+      if (d.locked && !d.open && g.hasKeys(g.player, d)) return `Trigger: unlock ${d.name} (your keys)`;
+      if (d.locked && !d.open) return `${d.name} (${d.boarded ? 'boarded up' : 'locked'})`;
+      return `Trigger: ${d.open ? 'close' : 'open'} ${d.name}`;
     }
     if (t.container) return `Trigger: ${t.container.open ? 'close' : 'open'} ${t.container.name}`;
-    if (t.hide) return 'Trigger: hide inside';
+    if (t.hide) return neighbor ? 'Trigger: search the wardrobe' : 'Trigger: hide inside';
     if (t.appliance) return `Trigger: turn ${t.appliance.on ? 'off' : 'on'} ${t.appliance.name}`;
     return '';
+  }
+
+  /** The HUD while waiting in the multiplayer lobby (null if there's no lobby). */
+  lobbyText() {
+    const mp = this.game.mp;
+    if (!mp.inRoom) return ['Not in a game', 'Take the headset off to host or join one'];
+    const names = [...mp.roster.values()].map((p) => p.name).join(', ');
+    const mode = mp.mode === 'versus' ? 'Player neighbor' : 'Co-op';
+    const lines = [`Room ${mp.net.code}  ·  ${mode}`, `${mp.roster.size} player${mp.roster.size === 1 ? '' : 's'}: ${names.length > 60 ? `${names.slice(0, 58)}…` : names}`];
+    if (!mp.isHost) lines.push('Waiting for the host to start...');
+    else if (mp.mode === 'versus' && mp.roster.size < 2) lines.push('Playing as the neighbor needs at least 2 players');
+    else lines.push('Pull a trigger to START');
+    return lines;
   }
 
   // --------------------------------------------------------- session
@@ -292,12 +335,16 @@ export class VR {
     else if (g.quality === 'high') g.applyQuality('medium');
 
     this.rig.add(g.camera);
+    g.camera.position.set(0, 0, 0);
+    g.camera.rotation.set(0, 0, 0);
     g.camera.add(this.hud, this.fade, this.slats);
     // Flashlight in your left hand.
     const left = this.hand('left').controller;
     left.add(g.flashlight, g.flashlight.target);
     g.flashlight.position.set(0, 0, -0.05);
     if (g.player.held) this.attachHeld(g.player.held, this.hand('right'));
+    // Put on in the multiplayer lobby: wait out on the street until the game starts.
+    if (g.state === 'menu') g.player.spawn(g.spawnPoint(), 0);
     this.placeRig();
   }
 
@@ -345,7 +392,31 @@ export class VR {
     const oz = -hx * Math.sin(yaw) + hz * Math.cos(yaw);
     this.rig.rotation.set(0, yaw, 0);
     // Only a gentle version of the "grabbed" lift in VR (no forced spins or rolls).
-    this.rig.position.set(p.ch.pos.x - ox, p.ch.pos.y + p.camOffset.y * 0.5, p.ch.pos.z - oz);
+    this.rig.position.set(p.ch.pos.x - ox, p.ch.pos.y + p.vrLift + p.camOffset.y * 0.5, p.ch.pos.z - oz);
+  }
+
+  /** Where you're looking, in the world: { yaw, pitch } (sent to the other players). */
+  look() {
+    const d = this.game.camera.getWorldDirection(this.tmp2);
+    return { yaw: Math.atan2(-d.x, -d.z), pitch: Math.asin(THREE.MathUtils.clamp(d.y, -1, 1)) };
+  }
+
+  /**
+   * Your hands relative to your body, turned to match your head's yaw (so a
+   * desktop player sees your avatar's arms where yours are): [lx, ly, lz, rx, ry, rz].
+   */
+  handsLocal(yaw) {
+    const p = this.game.player.pos;
+    const c = Math.cos(-yaw);
+    const s = Math.sin(-yaw);
+    const out = [];
+    for (const side of ['left', 'right']) {
+      const h = this.hand(side);
+      const v = h.grip.getWorldPosition(this.tmp).sub(p);
+      if (!h.source) v.set(side === 'left' ? -0.25 : 0.25, 0.75, 0); // not tracked: arm by your side
+      out.push(v.x * c + v.z * s, v.y, -v.x * s + v.z * c);
+    }
+    return out.map((x) => Math.round(x * 100) / 100);
   }
 
   // ---------------------------------------------------------- update
@@ -353,6 +424,10 @@ export class VR {
     if (!this.active) return;
     const g = this.game;
     const p = g.player;
+    if (g.state === 'menu') {
+      this.updateLobby(dt);
+      return;
+    }
     this.rig.updateMatrixWorld(true);
 
     const alt = g.altView();
@@ -382,17 +457,10 @@ export class VR {
       hand.pressed[name] = v;
       return v && !was;
     };
-    const released = (hand, name, v) => {
-      const was = hand.pressed[`${name}Up`];
-      hand.pressed[`${name}Up`] = v;
-      return !v && was;
-    };
-
     // Button presses this frame (tracked every frame so nothing fires late).
     const presses = (h, S) => ({
       trigger: edge(h, 'trigger', !!S.trigger),
       grip: edge(h, 'grip', !!S.grip),
-      gripUp: released(h, 'grip', !!S.grip),
       a: edge(h, 'a', !!S.a),
       b: edge(h, 'b', !!S.b),
     });
@@ -473,6 +541,7 @@ export class VR {
 
     // Lasers: what each hand is pointing at.
     this.promptHand = null;
+    const neighbor = g.role === 'neighbor';
     for (const h of this.hands) {
       if (!h.source || g.state !== 'playing' || alt || shift) {
         h.target = null;
@@ -483,7 +552,14 @@ export class VR {
       h.laser.visible = true;
       const origin = h.controller.getWorldPosition(new THREE.Vector3());
       const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(h.controller.getWorldQuaternion(new THREE.Quaternion()));
-      const res = p.hidden ? null : g.findTarget(origin, dir, true);
+      let res = p.hidden ? null : g.findTarget(origin, dir);
+      // Playing the neighbor: a kid within reach of your hand.
+      if (neighbor && !p.held && (!res || !res.item)) {
+        const kid = g.kidInReach(origin, dir);
+        if (kid) res = { kid, dist: Math.min(REACH, kid.eye(this.tmp).distanceTo(origin)) };
+      }
+      h.origin = origin;
+      h.dir = dir;
       h.target = res;
       h.laserMat.color.set(res ? 0xffd166 : 0xffffff);
       h.laserMat.opacity = res ? 0.9 : 0.35;
@@ -497,36 +573,55 @@ export class VR {
     // Buttons.
     for (const [h, P] of [[left, LP], [right, RP]]) {
       if (g.state !== 'playing' || alt) break;
+      const S = h === left ? L : R;
+      const holding = p.held && this.heldHand === h;
+      // Squeezing the grip: whatever's in (or about to land in) this hand stays while you squeeze.
+      if (P.grip) {
+        h.gripHold = true;
+        h.gripAt = g.time;
+      }
       // Let go while swinging: throw (even mid debug-shift, so it never sticks to your hand).
-      if (P.gripUp && p.held && this.heldHand === h) {
+      // (Online, the item lands in your hand a moment after you grab it. If you've already
+      // let go by then, it goes straight away.)
+      if (holding && h.gripHold && !S.grip) {
         this.throwFrom(h);
+      } else if (!holding && !S.grip && g.time - (h.gripAt || 0) > 1.5) {
+        h.gripHold = false;
       }
       if (shift) continue;
       if (P.trigger) {
-        if (h === left && !h.target && !p.hidden) {
+        if (h.target && h.target.kid) {
+          this.grabKid(h);
+        } else if (h === left && !h.target && !p.hidden) {
           g.toggleFlashlight();
+        } else if (neighbor && !h.target && !p.held && !p.hidden) {
+          this.grabKid(h);
         } else {
           g.target = h.target;
           this.lastHand = h;
+          // (Picked up with the trigger: it stays in your hand until you squeeze and let go.)
+          if (!S.grip) h.gripHold = false;
           g.interact();
         }
       }
-      // Grip: grab.
+      // Grip: grab (as the neighbor, on nothing: grab whichever kid you're reaching for).
       if (P.grip && h.target && h.target.item) {
         g.target = h.target;
         this.lastHand = h;
         g.interact();
         this.pulse(h, 0.3, 40);
+      } else if (P.grip && neighbor && !p.held && !p.hidden && (!h.target || h.target.kid)) {
+        this.grabKid(h);
       }
     }
 
-    // Heartbeat in your hands while he's chasing you.
-    if (g.neighbor.state === 'chase') {
+    // Heartbeat in your hands while he's after you.
+    const hunter = this.hunterDistance();
+    if (hunter < Infinity) {
       this.heartbeat -= dt;
       if (this.heartbeat <= 0) {
-        const d = g.neighbor.pos.distanceTo(p.pos);
-        this.pulseBoth(Math.min(1, 0.25 + 3 / Math.max(1, d)), 60);
-        this.heartbeat = THREE.MathUtils.clamp(d / 12, 0.35, 0.9);
+        this.pulseBoth(Math.min(1, 0.25 + 3 / Math.max(1, hunter)), 60);
+        this.heartbeat = THREE.MathUtils.clamp(hunter / 12, 0.35, 0.9);
       }
     }
 
@@ -593,6 +688,53 @@ export class VR {
     this.rig.updateMatrixWorld(true);
   }
 
+  /**
+   * How far away the neighbor is if he's after you (Infinity if he isn't):
+   * the AI chasing you, or (playing against a person) him being close.
+   */
+  hunterDistance() {
+    const g = this.game;
+    const p = g.player;
+    const n = g.neighbor;
+    if (g.state !== 'playing' || g.role === 'neighbor') return Infinity;
+    const d = n.pos.distanceTo(p.pos);
+    if (g.online && g.mp.mode === 'versus') return d < 7 && g.onProperty(p.pos) ? d : Infinity;
+    if (n.state !== 'chase') return Infinity;
+    // Online, only when it's you he's chasing.
+    if (g.online && !(g.mp.isHost ? n.focus === p : g.mp.wasChasingMe)) return Infinity;
+    return d;
+  }
+
+  /** Playing the neighbor: grab whichever kid `hand` is reaching for. */
+  grabKid(hand) {
+    if (this.game.grabAt(hand.origin, hand.dir)) this.pulse(hand, 1, 200);
+    else this.pulse(hand, 0.2, 30);
+  }
+
+  /** Waiting in the multiplayer lobby in the headset: stand on the street; the host can start. */
+  updateLobby(dt) {
+    const g = this.game;
+    const mp = g.mp;
+    this.placeRig();
+    this.rig.updateMatrixWorld(true);
+    for (const h of this.hands) {
+      h.target = null;
+      h.dot.visible = false;
+      h.laser.visible = false;
+      const gp = h.source && h.source.gamepad;
+      const trig = !!(gp && gp.buttons[0] && gp.buttons[0].pressed);
+      const press = trig && !h.pressed.trigger;
+      h.pressed.trigger = trig;
+      if (press && mp.inRoom && mp.isHost && !mp.started) {
+        if (mp.mode === 'versus' && mp.roster.size < 2) this.toast('Playing as the neighbor needs at least 2 players.');
+        else mp.hostStart();
+      }
+    }
+    this.slats.visible = false;
+    this.fade.material.opacity = 0;
+    this.drawHud(dt);
+  }
+
   /** Put the held item in a hand. */
   attachHeld(it, hand = this.lastHand || this.hand('right')) {
     this.heldHand = hand;
@@ -603,7 +745,7 @@ export class VR {
     it.mesh.scale.setScalar(big ? 0.8 : 1);
   }
 
-  /** Let go: the item flies off with your hand's speed. */
+  /** Let go: the item flies off with your hand's speed (online, the host takes it from there). */
   throwFrom(hand) {
     const g = this.game;
     const it = g.player.held;
@@ -611,13 +753,13 @@ export class VR {
     const vel = hand.vel.clone();
     const speed = vel.length();
     if (speed > 1.5) vel.multiplyScalar(1.35); // a little help: arms are shorter than they feel
-    g.releaseAt(it, pos, vel);
-    if (speed > 2) {
-      it.thrown = true;
-      it.spin.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14);
+    const thrown = speed > 2;
+    this.heldHand = null;
+    hand.gripHold = false;
+    g.releaseAt(it, pos, vel, thrown);
+    if (thrown) {
       g.sound.throwWhoosh();
       this.pulse(hand, 0.4, 50);
     }
-    this.heldHand = null;
   }
 }

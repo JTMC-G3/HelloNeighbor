@@ -405,7 +405,8 @@ canvas {
 }
 
 /* ------------------------------------------------------------- debug */
-#espCanvas {
+#espCanvas,
+#heardCanvas {
   position: fixed;
   inset: 0;
   width: 100%;
@@ -483,5 +484,189 @@ body.debugView #held {
   }
   .panel {
     padding: 22px 18px;
+  }
+}
+
+/* ------------------------------------------------------------ multiplayer */
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+
+.btn.tiny {
+  min-width: 0;
+  margin: 0 0 0 8px;
+  padding: 5px 12px;
+  font-size: 11px;
+  box-shadow: 0 2px 0 var(--accent-dark);
+  vertical-align: middle;
+}
+
+#mpMenu h2 {
+  margin-top: 0;
+}
+
+.field {
+  display: block;
+  margin: 10px 0 14px;
+  font-size: 14px;
+  text-align: left;
+}
+
+.field input,
+.field select,
+.joinRow input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #2a2e3a;
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  box-sizing: border-box;
+}
+
+.joinRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  margin: 10px 0;
+}
+
+.joinRow input {
+  width: 8.5em;
+  margin: 0;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  font-weight: bold;
+}
+
+.joinRow .btn {
+  min-width: 0;
+}
+
+.roomCode {
+  margin: 4px 0 14px;
+  font-size: 15px;
+}
+
+.roomCode b {
+  margin-left: 6px;
+  font-size: 30px;
+  letter-spacing: 0.2em;
+  color: #ffd166;
+  vertical-align: middle;
+}
+
+.modes {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+  text-align: left;
+}
+
+.mode {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.mode input {
+  accent-color: var(--accent);
+}
+
+.mode span {
+  display: block;
+  margin: 3px 0 0 24px;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+#mpPlayers {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+#mpPlayers li {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+#mpPlayers .dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+
+#mpMsg:empty,
+#mpWait:empty {
+  display: none;
+}
+
+#mpStatus {
+  position: absolute;
+  top: 66px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 5px 14px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 14px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* Versus: the neighbor player is skipping his chores. */
+#skipBanner {
+  position: absolute;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 8px 18px;
+  background: rgba(190, 20, 20, 0.88);
+  border: 2px solid #ff8a80;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: bold;
+  text-align: center;
+  pointer-events: none;
+  animation: skipPulse 1s ease-in-out infinite alternate;
+}
+
+#hud.skipping::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 90px 20px rgba(255, 30, 30, 0.55);
+  animation: skipPulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes skipPulse {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 1;
   }
 }
