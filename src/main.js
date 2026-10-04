@@ -1763,6 +1763,17 @@ class Game {
     this.toast(text, 5000);
   }
 
+  /** Play time as m:ss.mmm (h:mm:ss.mmm past an hour). */
+  formatTime(seconds) {
+    const total = Math.max(0, Math.round(seconds * 1000));
+    const ms = String(total % 1000).padStart(3, '0');
+    const s = Math.floor(total / 1000);
+    const ss = String(s % 60).padStart(2, '0');
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}:${ss}.${ms}`;
+    return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${ss}.${ms}`;
+  }
+
   updateEnding(dt) {
     this.endT += dt;
     const p = this.player;
@@ -1775,15 +1786,13 @@ class Game {
     $('fade').style.opacity = String(Math.max(0, Math.min(1, (this.endT - 2.5) / 2.5)));
     if (this.endT > 5.2 && $('end').classList.contains('hidden')) {
       if (document.pointerLockElement) document.exitPointerLock();
-      const secs = Math.floor(this.playTime);
-      const mm = Math.floor(secs / 60);
-      const ss = String(secs % 60).padStart(2, '0');
-      $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${mm}:${ss}</b><br />Times caught: <b>${this.catches}</b>`;
+      const time = this.formatTime(this.playTime);
+      $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${time}</b><br />Times caught: <b>${this.catches}</b>`;
       if (this.endInfo) {
         const lostIt = (this.endInfo.who === 'kids') === (this.role === 'neighbor');
         $('endTitle').innerHTML = this.endInfo.who === 'kids' ? 'TO BE<br />CONTINUED...' : 'GAME<br />OVER';
         $('endBlurb').textContent = `${this.endInfo.text} ${this.mp.mode === 'versus' ? (lostIt ? 'You lose!' : 'You win!') : ''}`;
-        $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${mm}:${ss}</b><br />Kids caught: <b>${this.mp.catches}</b>`;
+        $('stats').innerHTML = `House <b>#${this.seed}</b><br />Time: <b>${time}</b><br />Kids caught: <b>${this.mp.catches}</b>`;
       }
       $('hud').classList.add('hidden');
       $('end').classList.remove('hidden');
