@@ -115,10 +115,16 @@ There are no objectives or hints. Exploring and figuring things out is the game.
 
 ### Replaying a house
 
-Each house has a number, shown in the pause menu and on the end screen. **Restart this
-house** / **Replay this house** play the same one again. To share a house, add `?seed=` and
-its number to the address, e.g. `http://localhost:5173/?seed=123456`. **New house** generates
-a fresh one.
+Each house has a number, shown on the title screen, in the pause menu and on the end
+screen. To go back to a house later, type its number into the **House #** box on the title
+screen (e.g. `333772`) and press **Load** (or Enter, or just Play): you get exactly the same
+house again. Any word works too: `spooky` always gives the same house (#813380).
+**🎲 New** picks a random one.
+
+**Restart this house** / **Replay this house** play the same one again, and **New house**
+generates a fresh one. To share a house, send the number, or add `?seed=` and the number to
+the address, e.g. `http://localhost:5173/?seed=123456`. In multiplayer, everyone plays the
+host's house, so the host picks the house number before pressing **Host a game**.
 
 ---
 

@@ -42,3 +42,32 @@ export class Rng {
 export function randomSeed() {
   return (Math.random() * 900000 + 100000) | 0;
 }
+
+const MAX_SEED = 2147483647;
+
+/**
+ * House number from what the player typed: a number is used as-is (so
+ * "333772" is house #333772 again), anything else ("spooky") is turned into a
+ * 6-digit house number the same way every time. Empty -> null (random).
+ */
+export function seedFromText(text) {
+  const t = String(text || '').trim().replace(/^#/, '');
+  if (!t) return null;
+  if (/^\d+$/.test(t)) {
+    const n = Number(t);
+    if (n >= 1 && n <= MAX_SEED) return n;
+  }
+  // FNV-1a hash of the (lower-cased) text.
+  let h = 0x811c9dc5;
+  for (const ch of t.toLowerCase()) {
+    h ^= ch.codePointAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return 100000 + (h % 900000);
+}
+
+/** The seed in the page address (?seed=...), if any. */
+export function seedFromUrl() {
+  const n = Number(new URLSearchParams(window.location.search).get('seed'));
+  return Number.isInteger(n) && n >= 1 && n <= MAX_SEED ? n : null;
+}

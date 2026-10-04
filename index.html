@@ -46,6 +46,13 @@
           <button id="playBtn" class="btn">Play</button>
           <button id="vrBtn" class="btn vr vrBtn hidden" title="Needs a WebXR headset (Quest, Pico, or PC VR in a WebXR browser)">Play in VR</button>
           <button id="mpBtn" class="btn secondary">Multiplayer</button>
+          <div class="seedRow">
+            <label for="seedInput">House #</label>
+            <input id="seedInput" maxlength="24" autocomplete="off" spellcheck="false" title="Type a house number to visit that exact house again, or any word for a house of its own" />
+            <button id="seedGo" class="btn tiny">Load</button>
+            <button id="seedRandom" class="btn tiny" title="A brand-new random house">🎲 New</button>
+          </div>
+          <div id="seedNote" class="tip"></div>
           <div class="settings">
             <label>Graphics
               <select class="qualitySel">

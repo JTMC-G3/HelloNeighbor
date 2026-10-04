@@ -670,3 +670,35 @@ body.debugView #held {
     opacity: 1;
   }
 }
+
+/* Title screen: house number box. */
+.seedRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+
+.seedRow input {
+  width: 9.5em;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: #2a2e3a;
+  color: var(--ink);
+  font: inherit;
+  font-weight: bold;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+.seedRow .btn.tiny {
+  margin: 0;
+}
+
+#seedNote:empty {
+  display: none;
+}

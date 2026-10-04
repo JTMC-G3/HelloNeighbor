@@ -7,7 +7,7 @@ import { Player } from './player.js';
 import { Neighbor } from './neighbor.js';
 import { Sound } from './audio.js';
 import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality, adapt } from './quality.js';
-import { randomSeed } from './rng.js';
+import { randomSeed, seedFromText, seedFromUrl } from './rng.js';
 import { Debug } from './debug.js';
 import { Multiplayer } from './mp.js';
 import { VR } from './vr.js';
@@ -32,8 +32,7 @@ class Game {
     this.menuOpen = false;
     this.stunned = 0;
     // Every visit is a different house; ?seed=123456 replays a specific one.
-    const seedParam = Number(new URLSearchParams(window.location.search).get('seed'));
-    this.seed = Number.isFinite(seedParam) && seedParam > 0 ? Math.floor(seedParam) : randomSeed();
+    this.seed = seedFromUrl() || randomSeed();
 
     // ---- graphics settings
     this.detected = detectQuality();
@@ -384,7 +383,11 @@ class Game {
     });
     document.addEventListener('pointerlockerror', () => this.lockFailed());
 
-    $('playBtn').addEventListener('click', () => this.start());
+    $('playBtn').addEventListener('click', () => {
+      // Typed a different house number? Go there first (press Play again once it's built).
+      if (!this.loadTypedHouse()) this.start();
+    });
+    this.bindSeedInput();
     $('vrBtn').addEventListener('click', () => this.enterVR(() => this.start(true)));
     // Multiplayer lobby: wait in the headset until the host starts the game.
     $('mpVrBtn').addEventListener('click', () => this.enterVR());
@@ -521,6 +524,58 @@ class Game {
     this.player.spawn(SPAWN, 0);
     if (!inVR) this.lockPointer();
     this.toast("There's something strange going on across the street...");
+  }
+
+  // ------------------------------------------------------------ house number
+  /** Title screen "House #" box: type a number (or any word) to visit that house. */
+  bindSeedInput() {
+    const input = $('seedInput');
+    input.value = String(this.seed);
+    const note = sessionStorage.getItem('hn-seed-note');
+    sessionStorage.removeItem('hn-seed-note');
+    if (note) this.seedNote(note);
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') this.loadTypedHouse(true);
+    });
+    input.addEventListener('input', () => this.seedNote(''));
+    $('seedGo').addEventListener('click', () => this.loadTypedHouse(true));
+    $('seedRandom').addEventListener('click', () => this.goToHouse(randomSeed(), 'A brand-new house. Press Play!'));
+  }
+
+  seedNote(text) {
+    $('seedNote').textContent = text;
+  }
+
+  /**
+   * If the box holds a different house than the one loaded, reload into it and
+   * return true. `force`: also say so when it's already the loaded house.
+   */
+  loadTypedHouse(force = false) {
+    const text = $('seedInput').value.trim();
+    const seed = seedFromText(text);
+    if (seed === null) {
+      if (force) this.goToHouse(randomSeed(), 'A brand-new house. Press Play!');
+      return force;
+    }
+    if (seed === this.seed) {
+      if (force) this.seedNote(`House #${seed} is ready. Press Play!`);
+      return false;
+    }
+    const exact = String(seed) === text.replace(/^#/, '').replace(/^0+(?=\d)/, '');
+    const word = exact ? '' : `"${text}" is house #${seed}. `;
+    this.goToHouse(seed, `${word}House #${seed} is ready. Press Play!`);
+    return true;
+  }
+
+  goToHouse(seed, note) {
+    try {
+      sessionStorage.setItem('hn-seed-note', note);
+    } catch {
+      /* private mode */
+    }
+    this.allowLeave();
+    window.location.search = `?seed=${seed}`;
   }
 
   /** Multiplayer game started (see mp.js). `role` is 'kid' or 'neighbor'. */
