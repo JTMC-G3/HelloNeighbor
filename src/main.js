@@ -14,7 +14,8 @@ import { VR } from './vr.js';
 
 const REACH = 2.5;
 // Things that block reaching for an item: walls, glass, closed cupboards (not doors, handled separately).
-const blocksReach = (c) => c.kind !== 'door' && !(c.container && c.container.t > 0.3);
+// (Boxes don't: you'd never be able to aim at the box itself from some angles.)
+const blocksReach = (c) => c.kind !== 'door' && c.kind !== 'box' && !(c.container && c.container.t > 0.3);
 const $ = (id) => document.getElementById(id);
 const V3 = (a) => new THREE.Vector3(Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0);
 
@@ -91,6 +92,14 @@ class Game {
     this.world.containers.forEach((c, i) => { c.idx = i; });
     this.world.appliances.forEach((a, i) => { a.idx = i; });
     this.world.hideSpots.forEach((h, i) => { h.idx = i; });
+    // Cardboard boxes are solid while they're sitting still (see updateBoxes).
+    this.boxes = this.world.items.filter((it) => it.type === 'box');
+    for (const it of this.boxes) {
+      it.collider = this.physics.add(0, -100, 0, 0, -100, 0, 'box', it);
+      it.collider.enabled = false;
+      it.stillT = 0;
+      it.lastPos = it.pos.clone();
+    }
     const nd = this.world.navData;
     this.neighbor.setRoutes(nd.patrol, nd.home, nd.guard);
     // Chores he can actually walk to in this house.
@@ -1374,6 +1383,54 @@ class Game {
     }
   }
 
+  /**
+   * Boxes you can't walk through (but can jump onto and stack). A box is solid
+   * only while it's sitting still: not held, not flying, and not landed on top
+   * of someone (it waits until they step out of the way). The AI neighbor
+   * ignores them (see Neighbor: ignoreBoxes).
+   */
+  updateBoxes(dt) {
+    const authority = !this.online || this.mp.isHost;
+    for (const it of this.boxes) {
+      const c = it.collider;
+      const moved = it.pos.distanceToSquared(it.lastPos) > 0.00004;
+      it.lastPos.copy(it.pos);
+      it.stillT = moved ? 0 : it.stillT + dt;
+      let solid = !it.held && !it.consumed && !it.container;
+      // On other players' screens the host moves boxes: wait until one has settled.
+      if (solid) solid = authority ? it.sleeping : it.stillT > 0.3;
+      if (!solid) {
+        c.enabled = false;
+        continue;
+      }
+      const yaw = it.mesh.rotation.y;
+      const h = Math.min(0.27, 0.21 * (Math.abs(Math.cos(yaw)) + Math.abs(Math.sin(yaw))));
+      const x0 = it.pos.x - h;
+      const x1 = it.pos.x + h;
+      const z0 = it.pos.z - h;
+      const z1 = it.pos.z + h;
+      const y0 = it.pos.y - it.radius;
+      const y1 = it.pos.y + 0.2;
+      if (c.min.x !== x0 || c.min.z !== z0 || c.min.y !== y0 || c.max.x !== x1) this.physics.moveTo(c, x0, y0, z0, x1, y1, z1);
+      if (!c.enabled && this.someoneIn(c)) continue;
+      c.enabled = true;
+    }
+  }
+
+  /** Is a player standing inside collider `c` (so it shouldn't turn solid yet)? */
+  someoneIn(c) {
+    const bodies = [this.player];
+    if (this.online) bodies.push(...this.mp.peers.values());
+    for (const b of bodies) {
+      const p = b.pos;
+      const r = (b.ch && b.ch.radius) || 0.3;
+      const hgt = (b.ch && b.ch.height) || 1.7;
+      if (p.y >= c.max.y - 0.01 || p.y + hgt <= c.min.y) continue;
+      if (p.x > c.min.x - r && p.x < c.max.x + r && p.z > c.min.z - r && p.z < c.max.z + r) return true;
+    }
+    return false;
+  }
+
   updateItems(dt) {
     const nb = this.neighbor;
     for (const it of this.world.items) {
@@ -1795,6 +1852,7 @@ class Game {
       }
       if (this.aiActive()) this.neighbor.update(dt, this.aiPlayers(), this);
       if (this.online) this.mp.update(dt);
+      this.updateBoxes(dt);
       if (playing) {
         if (!this.online && this.neighbor.state !== 'chase') this.sound.setChase(false);
         if (this.online && this.mp.isHost && this.mp.mode === 'coop') this.sound.setChase(this.neighbor.state === 'chase');

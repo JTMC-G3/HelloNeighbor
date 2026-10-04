@@ -7,7 +7,8 @@ import * as THREE from 'three';
  * a boarded-up door are skipped until the boards come off.
  */
 
-const walkFilter = (c) => c.kind !== 'door';
+// Doors open, and he just kicks boxes out of the way.
+const walkFilter = (c) => c.kind !== 'door' && c.kind !== 'box';
 const a = new THREE.Vector3();
 const b = new THREE.Vector3();
 

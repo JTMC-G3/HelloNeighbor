@@ -91,6 +91,13 @@ export class Physics {
       stamp: 0,
     };
     this.colliders.push(c);
+    this.link(c);
+    return c;
+  }
+
+  /** Put collider `c` into the broadphase cells its footprint covers. */
+  link(c) {
+    c.cells = [];
     const ix0 = Math.floor(c.min.x / CELL);
     const ix1 = Math.floor(c.max.x / CELL);
     const iz0 = Math.floor(c.min.z / CELL);
@@ -100,9 +107,21 @@ export class Physics {
         const k = cellKey(ix, iz);
         if (!this.grid.has(k)) this.grid.set(k, []);
         this.grid.get(k).push(c);
+        c.cells.push(k);
       }
     }
-    return c;
+  }
+
+  /** Move a collider (something that gets picked up and put down, like a box). */
+  moveTo(c, x0, y0, z0, x1, y1, z1) {
+    for (const k of c.cells) {
+      const cell = this.grid.get(k);
+      const i = cell.indexOf(c);
+      if (i >= 0) cell.splice(i, 1);
+    }
+    c.min.set(Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1));
+    c.max.set(Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1));
+    this.link(c);
   }
 
   /** Rectangles where the implicit y=0 ground plane does not exist. */
@@ -121,8 +140,9 @@ export class Physics {
     const r = ch.radius;
     for (let i = 0; i < cands.length; i++) {
       const c = cands[i];
-      if (!c.enabled) continue;
-      if (c.max.y <= ch.pos.y + stepH) continue;
+      if (!c.enabled || (c.kind === 'box' && ch.ignoreBoxes)) continue;
+      // Boxes can't be walked up onto like a step: jump onto them.
+      if (c.max.y <= ch.pos.y + (c.kind === 'box' ? 0.06 : stepH)) continue;
       if (c.min.y >= ch.pos.y + ch.height) continue;
       const px = ch.pos.x;
       const pz = ch.pos.z;
@@ -156,7 +176,7 @@ export class Physics {
   blockedAbove(ch, height) {
     const r = ch.radius * 0.9;
     for (const c of this.near(ch.pos.x - r, ch.pos.z - r, ch.pos.x + r, ch.pos.z + r)) {
-      if (!c.enabled) continue;
+      if (!c.enabled || (c.kind === 'box' && ch.ignoreBoxes)) continue;
       if (c.min.y > ch.pos.y + ch.stepHeight && c.min.y < ch.pos.y + height && c.max.y > ch.pos.y + ch.stepHeight
         && circleRect(ch.pos.x, ch.pos.z, r, c)) return true;
     }
@@ -198,7 +218,7 @@ export class Physics {
 
     if (ch.vel.y > 0) {
       for (const c of cands) {
-        if (!c.enabled) continue;
+        if (!c.enabled || (c.kind === 'box' && ch.ignoreBoxes)) continue;
         if (c.min.y > prevY + ch.height * 0.5 && c.min.y < ch.pos.y + ch.height && circleRect(ch.pos.x, ch.pos.z, r, c)) {
           ch.pos.y = c.min.y - ch.height;
           ch.vel.y = 0;
@@ -209,7 +229,7 @@ export class Physics {
     const limit = prevY + stepH;
     let ground = -Infinity;
     for (const c of cands) {
-      if (!c.enabled) continue;
+      if (!c.enabled || (c.kind === 'box' && ch.ignoreBoxes)) continue;
       if (c.max.y <= limit && c.max.y > ground && circleRect(ch.pos.x, ch.pos.z, r, c)) ground = c.max.y;
     }
     const t = this.terrainAt(ch.pos.x, ch.pos.z);
@@ -234,7 +254,7 @@ export class Physics {
   /** Is there room for a body of radius r standing at p (ignoring doors and low stuff)? */
   circleFree(p, r, y0 = 0.45, y1 = 1.9) {
     for (const c of this.near(p.x - r, p.z - r, p.x + r, p.z + r)) {
-      if (!c.enabled || c.kind === 'door') continue;
+      if (!c.enabled || c.kind === 'door' || c.kind === 'box') continue;
       if (c.max.y <= p.y + y0 || c.min.y >= p.y + y1) continue;
       if (circleRect(p.x, p.z, r, c)) return false;
     }
@@ -309,7 +329,7 @@ export class Physics {
       it.pos.addScaledVector(it.vel, h);
 
       for (const c of cands) {
-        if (!c.enabled) continue;
+        if (!c.enabled || c.ref === it) continue;
         const p = it.pos;
         if (p.x < c.min.x - r || p.x > c.max.x + r || p.y < c.min.y - r || p.y > c.max.y + r
           || p.z < c.min.z - r || p.z > c.max.z + r) continue;

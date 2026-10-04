@@ -105,6 +105,7 @@ export class Neighbor {
       height: 1.95,
       stepHeight: 0.45,
       onGround: true,
+      ignoreBoxes: true, // he barges through cardboard boxes (so they can't trap him)
     };
     this.heading = 0;
     this.path = [];
