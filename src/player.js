@@ -127,7 +127,7 @@ export class Player {
     }
     this.sprinting = (vi ? vi.sprint && wl > 0.3 : (k.has('ShiftLeft') || k.has('ShiftRight')) && f > 0) && !this.crouching;
     const speed = this.crouching ? 1.9 : this.sprinting ? b.sprint : b.walk;
-    const accel = this.ch.onGround ? 14 : 3;
+    const accel = this.ch.onGround || this.flying ? 14 : 3; // (flying: prop flying on a box)
     const blend = Math.min(1, accel * dt);
     this.ch.vel.x += (wx * speed - this.ch.vel.x) * blend;
     this.ch.vel.z += (wz * speed - this.ch.vel.z) * blend;
