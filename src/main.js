@@ -17,6 +17,16 @@ const REACH = 2.5;
 // (Boxes don't: you'd never be able to aim at the box itself from some angles.)
 const blocksReach = (c) => c.kind !== 'door' && c.kind !== 'box' && !(c.container && c.container.t > 0.3);
 const $ = (id) => document.getElementById(id);
+// Alpha-style box jank, on purpose (see updateBoxes / playerJank). Set any of these to 0 to calm it down.
+const JANK = {
+  push: 0.55, // walking into a box shoves it (fraction of your speed)
+  launchChance: 0.17, // jumping off a box sometimes flings you...
+  launchSpeed: 10, // ...this hard
+  surf: 6.2, // "box surfing": hold a box, look down, hold jump to climb on it
+  surfEvery: 0.55,
+  superBounce: 0.15, // chance a thrown box comes off the floor extra bouncy
+  kick: 4.5, // the neighbor punts boxes out of his way
+};
 const V3 = (a) => new THREE.Vector3(Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0);
 
 class Game {
@@ -94,7 +104,9 @@ class Game {
     this.world.hideSpots.forEach((h, i) => { h.idx = i; });
     // Cardboard boxes are solid while they're sitting still (see updateBoxes).
     this.boxes = this.world.items.filter((it) => it.type === 'box');
+    this.jank = JANK; // (handy for tuning from the console: game.jank.push = 0)
     for (const it of this.boxes) {
+      it.baseBounce = it.bounce;
       it.collider = this.physics.add(0, -100, 0, 0, -100, 0, 'box', it);
       it.collider.enabled = false;
       it.stillT = 0;
@@ -1234,6 +1246,8 @@ class Game {
     it.thrown = thrown;
     it.thrownBy = thrown ? actor : null;
     if (thrown) it.spin.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14);
+    // Box jank: every so often a thrown box comes off the first thing it hits like a rubber ball.
+    if (it.baseBounce !== undefined) it.bounce = thrown && Math.random() < JANK.superBounce ? 1.35 : it.baseBounce;
   }
 
   /** Show `it` in your hand. */
@@ -1391,6 +1405,7 @@ class Game {
    */
   updateBoxes(dt) {
     const authority = !this.online || this.mp.isHost;
+    if (authority && this.state !== 'ending') this.boxJank();
     for (const it of this.boxes) {
       const c = it.collider;
       const moved = it.pos.distanceToSquared(it.lastPos) > 0.00004;
@@ -1415,6 +1430,86 @@ class Game {
       if (!c.enabled && this.someoneIn(c)) continue;
       c.enabled = true;
     }
+  }
+
+  /** The box `body` is standing on, if any. */
+  boxUnder(body) {
+    const r = body.ch.radius * 0.85;
+    for (const it of this.boxes) {
+      const c = it.collider;
+      if (!c.enabled || Math.abs(body.pos.y - c.max.y) > 0.06) continue;
+      if (body.pos.x > c.min.x - r && body.pos.x < c.max.x + r && body.pos.z > c.min.z - r && body.pos.z < c.max.z + r) return it;
+    }
+    return null;
+  }
+
+  /** Box jank that happens to you: launches off boxes, and box surfing. */
+  playerJank(onBox, wasOnGround) {
+    const p = this.player;
+    // Jumped off a box: every so often the physics "helps" a little too much.
+    if (onBox && wasOnGround && !p.ch.onGround && p.ch.vel.y > 4 && Math.random() < JANK.launchChance) {
+      p.ch.vel.y = JANK.launchSpeed;
+      this.sound.thud(onBox.pos, 5);
+    }
+    // Box surfing: holding a box, looking down at it, jump on it, again and again.
+    const h = p.held;
+    if (JANK.surf && h && h.type === 'box' && p.pitch < -1.1 && p.keys.has('Space') && !p.crouching && this.time > (this.surfAt || 0)) {
+      p.ch.vel.y = Math.max(p.ch.vel.y, JANK.surf);
+      p.ch.onGround = false;
+      this.surfAt = this.time + JANK.surfEvery;
+      this.sound.thud(p.pos, 3);
+    }
+  }
+
+  /** Authority: shove boxes people walk into, and let the neighbor punt them. */
+  boxJank() {
+    const bodies = [this.player];
+    if (this.online) bodies.push(...this.mp.peers.values());
+    const nb = this.neighbor;
+    const nbKicks = this.aiActive() && nb.speed > 0.5 && !(nb.task && nb.task.phase === 'do');
+    for (const it of this.boxes) {
+      const c = it.collider;
+      if (it.held || it.consumed || it.container || this.time - (it.pushedAt || -9) < 0.5) continue;
+      if (c.enabled && JANK.push) {
+        for (const b of bodies) {
+          const v = b.ch.vel;
+          const sp = Math.hypot(v.x, v.z);
+          const bp = b.pos;
+          if (sp < 1 || bp.y >= c.max.y - 0.06 || bp.y + 1 < c.min.y) continue;
+          const cx = Math.max(c.min.x, Math.min(bp.x, c.max.x));
+          const cz = Math.max(c.min.z, Math.min(bp.z, c.max.z));
+          const d = Math.hypot(bp.x - cx, bp.z - cz);
+          if (d > (b.ch.radius || 0.3) + 0.06) continue;
+          if (((cx - bp.x) * v.x + (cz - bp.z) * v.z) / (d || 1) < 0.8) continue;
+          // Knocked mostly aside (not bulldozed ahead of you into the next doorway).
+          const side = Math.random() < 0.5 ? -1 : 1;
+          const px = (-v.z / sp) * side;
+          const pz = (v.x / sp) * side;
+          const k = JANK.push * sp;
+          this.shoveBox(it, v.x * JANK.push * 0.45 + px * k * 0.8, 0.6 + Math.random() * 0.8, v.z * JANK.push * 0.45 + pz * k * 0.8, 5, b);
+          break;
+        }
+      }
+      if (nbKicks && JANK.kick && it.sleeping) {
+        const dx = it.pos.x - nb.pos.x;
+        const dz = it.pos.z - nb.pos.z;
+        if (Math.hypot(dx, dz) < 0.6 && Math.abs(it.pos.y - nb.pos.y) < 1) {
+          const f = JANK.kick * (0.8 + Math.random() * 0.4);
+          this.shoveBox(it, Math.sin(nb.heading) * f, 2 + Math.random() * 1.5, Math.cos(nb.heading) * f, 14, nb);
+          this.sfx.thud(it.pos, 6);
+        }
+      }
+    }
+  }
+
+  shoveBox(it, vx, vy, vz, spin, by) {
+    it.pushedAt = this.time;
+    it.sleeping = false;
+    it.sleepTimer = 0;
+    it.vel.set(vx, vy, vz);
+    it.spin.set((Math.random() - 0.5) * spin, (Math.random() - 0.5) * spin * 1.5, (Math.random() - 0.5) * spin);
+    it.lastHolder = by;
+    it.collider.enabled = false;
   }
 
   /** Is a player standing inside collider `c` (so it shouldn't turn solid yet)? */
@@ -1447,6 +1542,8 @@ class Game {
           return false;
         },
         (speed) => {
+          // (A super-bouncy throw only gets the one big bounce.)
+          if (it.baseBounce !== undefined) it.bounce = it.baseBounce;
           if (speed > 2.2) {
             this.sfx.thud(it.pos, speed);
             this.emitNoise(it.pos, Math.min(14, speed * 1.4), null, it.lastHolder || null);
@@ -1812,7 +1909,10 @@ class Game {
           p.syncCamera(dt);
         } else {
           if (p.roll && !p.hidden) p.roll = 0;
+          const onBox = p.ch.onGround ? this.boxUnder(p) : null;
+          const wasOnGround = p.ch.onGround;
           p.update(dt, (pos, r) => this.emitNoise(pos, r, p));
+          this.playerJank(onBox, wasOnGround);
           // Playing the neighbor: you can't leave your property either.
           if (this.role === 'neighbor' && this.keepOnProperty(p.ch)) {
             p.syncCamera(0);
@@ -1844,6 +1944,8 @@ class Game {
             this.mp.neighborHears(nz);
             continue;
           }
+          // (He doesn't go and investigate the box he just punted.)
+          if (nz.owner === this.neighbor) continue;
           const heard = nz.pos.distanceTo(this.neighbor.pos) < nz.radius;
           if (heard && this.aiActive()) this.neighbor.hear(nz.pos, this, nz.radius);
           if (this.debug) this.debug.noise(nz.pos, nz.radius, heard);
