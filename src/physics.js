@@ -261,6 +261,17 @@ export class Physics {
     return true;
   }
 
+  /** Could character `ch` stand at (x, y, z) without being inside anything solid (doors included)? */
+  roomFor(ch, x, y, z) {
+    const r = ch.radius;
+    for (const c of this.near(x - r, z - r, x + r, z + r)) {
+      if (!c.enabled || c.kind === 'box') continue;
+      if (c.max.y <= y + ch.stepHeight || c.min.y >= y + ch.height) continue;
+      if (circleRect(x, z, r, c)) return false;
+    }
+    return true;
+  }
+
   /** Highest walkable surface under (x, z) at or below y. */
   groundBelow(x, y, z) {
     let g = this.terrainAt(x, z);

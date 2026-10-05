@@ -101,6 +101,8 @@ There are no objectives or hints. Exploring and figuring things out is the game.
 * Cardboard boxes are solid: you can't walk through them, but you can jump onto them and
   stack them to climb higher. Their physics are a bit janky on purpose, like the real alpha:
   they get shoved around when you walk into them, and jumping off one sometimes launches you.
+  Drop a box while looking straight up and it lands on your head and shoves you forward:
+  if there's a wall in the way you get squashed against it... and then pushed through it.
   (Tune or switch each one off in the `JANK` settings at the top of `src/main.js`.)
 * **Prop flying**, Half-Life 2 style: pick up a box and look down at your feet. The box ends
   up under you, so you're standing on the thing you're carrying. Hold <kbd>Space</kbd> to
