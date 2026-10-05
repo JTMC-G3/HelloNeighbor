@@ -160,15 +160,6 @@ export class Sound {
     this.tone(node, { freq: 140, freqEnd: 60, dur: 0.12, gain: 0.5 });
   }
 
-  /** The wall-clip glitch: a crunchy, buzzy physics "zap". */
-  glitch(pos) {
-    if (!this.ok()) return;
-    const { node } = this.out(pos, 0.8, 30);
-    this.tone(node, { type: 'square', freq: 1400, freqEnd: 90, dur: 0.22, gain: 0.12 });
-    for (let i = 0; i < 5; i++) this.tone(node, { t: i * 0.035, type: 'sawtooth', freq: 300 + Math.random() * 1600, dur: 0.03, gain: 0.07 });
-    this.noise(node, { dur: 0.18, type: 'bandpass', freq: 2200, q: 2, gain: 0.7 });
-  }
-
   door(pos, opening) {
     if (!this.ok()) return;
     const { node } = this.out(pos, 0.7, 30);

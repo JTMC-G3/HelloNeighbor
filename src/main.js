@@ -22,7 +22,6 @@ const JANK = {
   push: 0.55, // walking into a box shoves it (fraction of your speed)
   launchChance: 0.17, // jumping off a box sometimes flings you...
   launchSpeed: 10, // ...this hard
-  headClip: 1, // chance a box landing on your head shoves you forward... into the wall... and through it
   propFly: 3.6, // HL2-style prop flying: hold a box, look at your feet, stand on it. Jump = up (m/s)
   superBounce: 0.15, // chance a thrown box comes off the floor extra bouncy
   kick: 4.5, // the neighbor punts boxes out of his way
@@ -1207,7 +1206,6 @@ class Game {
     it.held = true;
     it.holder = actor.id;
     it.lastHolder = actor;
-    it.bonked = false;
     it.sleeping = true;
     it.thrown = false;
     it.vel.set(0, 0, 0);
@@ -1411,7 +1409,6 @@ class Game {
     for (const it of this.boxes) {
       const c = it.collider;
       const moved = it.pos.distanceToSquared(it.lastPos) > 0.00004;
-      if (!it.held && !it.bonked && it.pos.y < it.lastPos.y - 0.004) this.headBonk(it);
       it.lastPos.copy(it.pos);
       it.stillT = moved ? 0 : it.stillT + dt;
       let solid = !it.held && !it.consumed && !it.container;
@@ -1433,94 +1430,6 @@ class Game {
       if (!c.enabled && this.someoneIn(c)) continue;
       c.enabled = true;
     }
-  }
-
-  /**
-   * Box jank: a falling box that lands on your head (drop one while looking straight up)
-   * shoves you forward. Walk into a wall like that and you get pressed into it, shaking...
-   * and then pop out the other side. (You only ever end up somewhere you could stand.)
-   */
-  headBonk(it) {
-    const p = this.player;
-    if (!JANK.headClip || this.clip || this.state !== 'playing' || p.vr || p.hidden || this.hideAnim || this.stunned > 0) return;
-    const dx = it.pos.x - p.pos.x;
-    const dz = it.pos.z - p.pos.z;
-    const top = p.pos.y + p.ch.height;
-    if (dx * dx + dz * dz > 0.42 * 0.42 || it.pos.y - 0.2 > top + 0.05 || it.pos.y < p.pos.y + p.ch.height * 0.6) return;
-    it.bonked = true;
-    if (Math.random() >= JANK.headClip) return;
-    this.sound.thud(p.pos, 5);
-    this.clip = { t: 0, dir: new THREE.Vector3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw)), pressed: 0, through: false, gone: 0 };
-  }
-
-  /** The head-bonk shove, one frame of it (instead of your normal movement). */
-  updateClip(dt) {
-    const p = this.player;
-    const ch = p.ch;
-    const cl = this.clip;
-    cl.t += dt;
-    p.roll = (Math.random() - 0.5) * 0.12;
-    if (!cl.through) {
-      // Shoved forward, still bumping into things like normal...
-      const want = Math.min(7, 2 + cl.t * 14) * dt;
-      const x0 = ch.pos.x;
-      const z0 = ch.pos.z;
-      this.physics.moveBy(ch, cl.dir.x * want, cl.dir.z * want);
-      ch.vel.set(0, 0, 0);
-      const went = (ch.pos.x - x0) * cl.dir.x + (ch.pos.z - z0) * cl.dir.z;
-      if (went < want * 0.5) {
-        // ...squashed against something: buzz, shake...
-        cl.pressed += dt;
-        p.camOffset.set((Math.random() - 0.5) * 0.06, (Math.random() - 0.5) * 0.06, (Math.random() - 0.5) * 0.06);
-        if (cl.pressed > 0.35) {
-          // ...and the physics gives up and lets you through.
-          cl.through = true;
-          cl.from = ch.pos.clone();
-          this.sound.glitch(p.pos);
-        }
-      } else if (cl.t > 0.6) {
-        this.endClip(true);
-        return;
-      }
-    } else {
-      // Noclip straight ahead until there's somewhere to stand.
-      const step = 9 * dt;
-      cl.gone += step;
-      ch.pos.addScaledVector(cl.dir, step);
-      if (this.clipSpot(ch) && cl.gone > ch.radius) {
-        ch.vel.copy(cl.dir).multiplyScalar(2.5);
-        this.emitNoise(p.pos, 6, p);
-        this.endClip(false);
-        return;
-      }
-      if (cl.gone > 6 || Math.abs(ch.pos.x) > 37.3 || ch.pos.z < -39.3 || ch.pos.z > 29.3) {
-        // Nowhere to come out: the physics snaps you back.
-        ch.pos.copy(cl.from);
-        this.endClip(false);
-        return;
-      }
-    }
-    p.syncCamera(dt);
-  }
-
-  /** Somewhere the head-bonk glitch can drop you: not inside anything, with a floor under it. */
-  clipSpot(ch) {
-    const { x, y, z } = ch.pos;
-    const ground = this.physics.groundBelow(x, y + ch.stepHeight, z);
-    if (ground === -Infinity) return false; // (e.g. out in the dirt behind the basement walls)
-    const fy = y - ground <= ch.stepHeight ? ground : y; // step up onto a raised floor; or fall
-    if (!this.physics.roomFor(ch, x, fy, z)) return false;
-    ch.pos.y = fy;
-    return true;
-  }
-
-  endClip(keepGoing) {
-    const p = this.player;
-    if (keepGoing && this.clip) p.ch.vel.copy(this.clip.dir).multiplyScalar(3);
-    this.clip = null;
-    p.roll = 0;
-    p.camOffset.set(0, 0, 0);
-    p.syncCamera(0);
   }
 
   /** The box `body` is standing on, if any. */
@@ -1732,7 +1641,6 @@ class Game {
     if (this.state !== 'playing') return;
     if (this.debug) this.debug.setView('player');
     this.state = 'caught';
-    if (this.clip) this.endClip(false);
     this.caughtT = 0;
     this.catches++;
     this.player.keys.clear();
@@ -2015,7 +1923,6 @@ class Game {
       if (playing) {
         this.playTime += dt;
         this.stunned = Math.max(0, this.stunned - dt);
-        if (this.clip && (p.hidden || this.hideAnim || this.stunned > 0 || this.altView())) this.endClip(false);
         if (this.altView()) {
           // Your body stays put while a debug camera is active.
         } else if (this.hideAnim) {
@@ -2037,14 +1944,10 @@ class Game {
           p.syncCamera(dt);
         } else {
           if (p.roll && !p.hidden) p.roll = 0;
-          if (this.clip) {
-            this.updateClip(dt);
-          } else {
-            const onBox = p.ch.onGround ? this.boxUnder(p) : null;
-            const wasOnGround = p.ch.onGround;
-            p.update(dt, (pos, r) => this.emitNoise(pos, r, p));
-            this.playerJank(onBox, wasOnGround, dt);
-          }
+          const onBox = p.ch.onGround ? this.boxUnder(p) : null;
+          const wasOnGround = p.ch.onGround;
+          p.update(dt, (pos, r) => this.emitNoise(pos, r, p));
+          this.playerJank(onBox, wasOnGround, dt);
           // Playing the neighbor: you can't leave your property either.
           if (this.role === 'neighbor' && this.keepOnProperty(p.ch)) {
             p.syncCamera(0);
