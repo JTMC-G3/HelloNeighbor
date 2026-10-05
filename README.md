@@ -100,13 +100,9 @@ There are no objectives or hints. Exploring and figuring things out is the game.
   but he'll hear the glass.
 * Cardboard boxes are solid: you can't walk through them, but you can jump onto them and
   stack them to climb higher. Their physics are a bit janky on purpose, like the real alpha:
-  they get shoved around when you walk into them, and jumping off one sometimes launches you.
+  they get shoved around when you walk into them, jumping off one sometimes launches you,
+  and holding a box, looking straight down and holding jump lets you "box surf" upwards.
   (Tune or switch each one off in the `JANK` settings at the top of `src/main.js`.)
-* **Prop flying**, Half-Life 2 style: pick up a box and look down at your feet. The box ends
-  up under you, so you're standing on the thing you're carrying. Hold <kbd>Space</kbd> to
-  ride it up, let go to drift down slowly, <kbd>C</kbd> to sink faster, and
-  <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to fly around. Look back up and the box is
-  in your hands again, and you fall. Ceilings still stop you. (Not in VR.)
 * He patrols the house and yard. The **eye** at the top of the screen shows how suspicious
   he is. When it turns red he's chasing you, so break line of sight or get off his property.
   He never leaves his yard: once you're out of his front gate he can't follow you home.

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Physics, GRAVITY } from './physics.js';
+import { Physics } from './physics.js';
 import { buildWorld, SPAWN } from './world.js';
 import { Nav } from './nav.js';
 import { Player } from './player.js';
@@ -22,7 +22,8 @@ const JANK = {
   push: 0.55, // walking into a box shoves it (fraction of your speed)
   launchChance: 0.17, // jumping off a box sometimes flings you...
   launchSpeed: 10, // ...this hard
-  propFly: 3.6, // HL2-style prop flying: hold a box, look at your feet, stand on it. Jump = up (m/s)
+  surf: 6.2, // "box surfing": hold a box, look down, hold jump to climb on it
+  surfEvery: 0.55,
   superBounce: 0.15, // chance a thrown box comes off the floor extra bouncy
   kick: 4.5, // the neighbor punts boxes out of his way
 };
@@ -1264,8 +1265,7 @@ class Game {
     } else {
       this.sound.pickup();
     }
-    const fly = it.type === 'box' && JANK.propFly && !p.vr ? ' &nbsp;·&nbsp; look down + <kbd>Space</kbd> prop fly' : '';
-    $('held').innerHTML = `Holding: <b>${it.name}</b> &nbsp;·&nbsp; <kbd>Click</kbd> throw &nbsp;<kbd>Q</kbd> drop${fly}`;
+    $('held').innerHTML = `Holding: <b>${it.name}</b> &nbsp;·&nbsp; <kbd>Click</kbd> throw &nbsp;<kbd>Q</kbd> drop`;
   }
 
   /** Holding position in the corner of your view (desktop). */
@@ -1443,48 +1443,22 @@ class Game {
     return null;
   }
 
-  /** Box jank that happens to you: launches off boxes, and prop flying. */
-  playerJank(onBox, wasOnGround, dt) {
+  /** Box jank that happens to you: launches off boxes, and box surfing. */
+  playerJank(onBox, wasOnGround) {
     const p = this.player;
     // Jumped off a box: every so often the physics "helps" a little too much.
     if (onBox && wasOnGround && !p.ch.onGround && p.ch.vel.y > 4 && Math.random() < JANK.launchChance) {
       p.ch.vel.y = JANK.launchSpeed;
       this.sound.thud(onBox.pos, 5);
     }
-    // Prop flying (Half-Life 2 style): look down at the box you're holding and it ends up
-    // under your feet, so you're standing on the thing you're carrying. Hold jump to ride it
-    // up, crouch to sink faster, let go to drift down. Look up and it's back in your hands.
+    // Box surfing: holding a box, looking down at it, jump on it, again and again.
     const h = p.held;
-    const riding = !!JANK.propFly && !!h && h.type === 'box' && !p.vr && p.pitch < -0.9;
-    const flying = riding && (!p.ch.onGround || p.keys.has('Space'));
-    if (flying) {
-      const want = p.keys.has('Space') && !p.crouching ? JANK.propFly : p.crouching ? -3 : -0.6;
-      const vy = p.ch.vel.y + (want - p.ch.vel.y) * Math.min(1, dt * 8);
-      p.ch.vel.y = vy + GRAVITY * dt; // (gravity takes this back off next step)
+    if (JANK.surf && h && h.type === 'box' && p.pitch < -1.1 && p.keys.has('Space') && !p.crouching && this.time > (this.surfAt || 0)) {
+      p.ch.vel.y = Math.max(p.ch.vel.y, JANK.surf);
       p.ch.onGround = false;
-      if (!p.flying) this.sound.thud(p.pos, 2);
+      this.surfAt = this.time + JANK.surfEvery;
+      this.sound.thud(p.pos, 3);
     }
-    p.flying = flying;
-    if (riding !== !!this.riding) {
-      this.riding = riding;
-      if (!riding && h && !p.vr) this.attachHeldToCamera(h);
-    }
-    if (riding) this.boxUnderFeet(h);
-  }
-
-  /** Prop flying: keep the held box (it's still on the camera) right under your feet. */
-  boxUnderFeet(it) {
-    const p = this.player;
-    const cam = this.camera;
-    cam.updateWorldMatrix(true, false);
-    const at = this.tmpFeet || (this.tmpFeet = new THREE.Vector3());
-    it.mesh.position.copy(cam.worldToLocal(at.set(p.pos.x, p.pos.y - 0.21, p.pos.z)));
-    const q = this.tmpQ || (this.tmpQ = new THREE.Quaternion());
-    const up = this.tmpUp || (this.tmpUp = new THREE.Quaternion());
-    cam.getWorldQuaternion(q).invert();
-    up.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, p.yaw);
-    it.mesh.quaternion.copy(q.multiply(up));
-    it.mesh.scale.setScalar(1);
   }
 
   /** Authority: shove boxes people walk into, and let the neighbor punt them. */
@@ -1947,7 +1921,7 @@ class Game {
           const onBox = p.ch.onGround ? this.boxUnder(p) : null;
           const wasOnGround = p.ch.onGround;
           p.update(dt, (pos, r) => this.emitNoise(pos, r, p));
-          this.playerJank(onBox, wasOnGround, dt);
+          this.playerJank(onBox, wasOnGround);
           // Playing the neighbor: you can't leave your property either.
           if (this.role === 'neighbor' && this.keepOnProperty(p.ch)) {
             p.syncCamera(0);
