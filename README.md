@@ -87,7 +87,7 @@ server (see below).
 | **F** | Flashlight |
 | **Ctrl+W** | Won't close the game by accident: the browser asks "Leave site?" first, and in **Fullscreen** (tick it on the title screen or pause menu; Chrome/Edge) it does nothing at all |
 | **M** | Capture the mouse again, if the browser refused (it often does right after Esc) |
-| **Esc** / **P** | Pause (sensitivity, volume, restart). In multiplayer it opens the menu without pausing |
+| **Esc** / **P** | Pause (sensitivity, volume, restart; your settings are remembered). In multiplayer it opens the menu without pausing |
 | **`** | Debug mode on / off (see below) |
 
 Click the game to capture the mouse.
@@ -319,6 +319,11 @@ each button does while you hold the left stick in. The keyboard keys above work 
 The game is tuned to run on school Chromebooks. Pick a preset under **Graphics** on the
 title screen or in the pause menu. **Auto** chooses one from your device and remembers what
 you pick.
+
+Your settings are saved in the browser and survive a refresh: mouse sensitivity, volume,
+graphics preset, Show FPS, Debug mode, Fullscreen and your multiplayer name. (Browsers only
+allow fullscreen after a click, so with Fullscreen on, the game goes fullscreen again when you
+press Play.)
 
 | Preset | Meant for | What it does |
 | --- | --- | --- |

@@ -428,10 +428,19 @@ class Game {
     $('restartBtn').addEventListener('click', replay);
     $('againBtn').addEventListener('click', replay);
     for (const b of document.querySelectorAll('.newHouseBtn')) b.addEventListener('click', fresh);
-    $('sens').addEventListener('input', (e) => {
-      p.sensitivity = 0.0022 * Number(e.target.value);
-    });
-    $('vol').addEventListener('input', (e) => this.sound.setVolume(Number(e.target.value)));
+    // Mouse sensitivity and volume are remembered across refreshes (like the graphics settings).
+    const slider = (id, key, apply) => {
+      const el = $(id);
+      const saved = Number(loadSetting(key, el.value));
+      if (Number.isFinite(saved)) el.value = THREE.MathUtils.clamp(saved, Number(el.min), Number(el.max));
+      apply(Number(el.value));
+      el.addEventListener('input', () => {
+        apply(Number(el.value));
+        saveSetting(key, el.value);
+      });
+    };
+    slider('sens', 'sens', (v) => { p.sensitivity = 0.0022 * v; });
+    slider('vol', 'vol', (v) => this.sound.setVolume(v));
   }
 
   /**
@@ -507,11 +516,22 @@ class Game {
         navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyF', 'KeyC']).catch(() => {});
       }
     };
+    // The choice is remembered: the title screen shows it, and Play goes fullscreen again.
+    const wantFull = loadSetting('fullscreen', '0') === '1';
     for (const c of checks) {
       if (!document.documentElement.requestFullscreen) c.parentElement.classList.add('hidden');
+      c.checked = wantFull || !!document.fullscreenElement;
       c.addEventListener('change', () => {
-        if (c.checked) document.documentElement.requestFullscreen().catch(() => sync());
-        else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        saveSetting('fullscreen', c.checked ? '1' : '0');
+        for (const other of checks) other.checked = c.checked;
+        if (c.checked) {
+          document.documentElement.requestFullscreen().catch(() => {
+            saveSetting('fullscreen', '0'); // (not allowed here, e.g. in an embedded preview)
+            sync();
+          });
+        } else if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
       });
     }
     document.addEventListener('fullscreenchange', sync);
@@ -543,7 +563,7 @@ class Game {
     $('hud').classList.remove('hidden');
     this.state = 'playing';
     this.player.spawn(SPAWN, 0);
-    if (!inVR) this.lockPointer();
+    if (!inVR) this.captureForPlay();
     this.toast("There's something strange going on across the street...");
   }
 
@@ -630,7 +650,21 @@ class Game {
       this.player.spawn(this.spawnPoint(), 0);
       this.toast(versus ? 'One of your friends is the neighbor. Get into his basement!' : "There's something strange going on across the street...", 4000);
     }
-    this.lockPointer();
+    this.captureForPlay();
+  }
+
+  /**
+   * A game is starting: go back into fullscreen if you had it on last time (browsers only
+   * allow that from a click, so a refresh can't do it by itself), then capture the mouse.
+   */
+  captureForPlay() {
+    const el = document.documentElement;
+    if (loadSetting('fullscreen', '0') === '1' && !document.fullscreenElement && el.requestFullscreen && !this.vr.active) {
+      // Capture the mouse once fullscreen is in (asking for both at once can lose one).
+      el.requestFullscreen().catch(() => {}).finally(() => this.lockPointer());
+    } else {
+      this.lockPointer();
+    }
   }
 
   /** Where you wake up: the street, spread out a little in multiplayer. */
