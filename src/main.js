@@ -22,7 +22,7 @@ const JANK = {
   push: 0.55, // walking into a box shoves it (fraction of your speed)
   launchChance: 0.17, // jumping off a box sometimes flings you...
   launchSpeed: 10, // ...this hard
-  surf: 6.2, // "box surfing": hold a box, look down, hold jump to climb on it
+  surf: 6.2, // "box surfing": hold a box, look down, hold jump to climb on it (single player only)
   surfEvery: 0.55,
   superBounce: 0.15, // chance a thrown box comes off the floor extra bouncy
   kick: 4.5, // the neighbor punts boxes out of his way
@@ -1486,8 +1486,9 @@ class Game {
       this.sound.thud(onBox.pos, 5);
     }
     // Box surfing: holding a box, looking down at it, jump on it, again and again.
+    // Single player only: in multiplayer it's patched out (it skips the whole house).
     const h = p.held;
-    if (JANK.surf && h && h.type === 'box' && p.pitch < -1.1 && p.keys.has('Space') && !p.crouching && this.time > (this.surfAt || 0)) {
+    if (JANK.surf && !this.online && h && h.type === 'box' && p.pitch < -1.1 && p.keys.has('Space') && !p.crouching && this.time > (this.surfAt || 0)) {
       p.ch.vel.y = Math.max(p.ch.vel.y, JANK.surf);
       p.ch.onGround = false;
       this.surfAt = this.time + JANK.surfEvery;
