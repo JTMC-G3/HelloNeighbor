@@ -5,8 +5,7 @@ import { attachRelay } from './server/relay.js';
 // A leading dot allows every subdomain, which covers the random names
 // Cloudflare quick tunnels (`cloudflared tunnel --url ...`) hand out.
 // Add more with ALLOWED_HOSTS=example.com,.ngrok-free.app npm run dev
-const allowedHosts = ['.trycloudflare.com', ...(process.env.ALLOWED_HOSTS || '').split(',').filter(Boolean)];
-
+const allowedHosts = ['.trycloudflare.com', '.rigelrec.net', ...(process.env.ALLOWED_HOSTS || '').split(',').filter(Boolean)];
 // Multiplayer: the dev and preview servers also relay game messages on /mp
 // (same port, so Codespaces port forwarding and Cloudflare tunnels just work).
 const multiplayer = () => ({
