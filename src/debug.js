@@ -31,7 +31,7 @@ const $ = (id) => document.getElementById(id);
 const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 
 const MONO = 'ui-monospace, Menlo, Consolas, monospace';
-const DESKTOP_KEYS = ["` debug off · V neighbor's view · B free cam · N waypoints · L keys · K freeze · H hide panel"];
+const DESKTOP_KEYS = ["` debug off · V neighbors' views (press again for the next) · B free cam · N waypoints · L keys · K freeze · H hide panel"];
 const VR_KEYS = [
   'Click BOTH sticks: debug off',
   'Hold LEFT stick in, then (right hand):',
@@ -57,24 +57,11 @@ export class Debug {
     this.q = new THREE.Quaternion();
 
     const scene = game.scene;
-    const n = game.neighbor;
     this.group = new THREE.Group();
     scene.add(this.group);
 
-    // --- chams: a see-through copy of every neighbor mesh, drawn on top of everything.
-    this.chamMat = new THREE.MeshBasicMaterial({ color: 0x4cd964, transparent: true, opacity: 0.45, depthTest: false, depthWrite: false });
-    const meshes = [];
-    n.model.root.traverse((o) => {
-      if (o.isMesh) meshes.push(o);
-    });
-    this.chams = meshes.map((o) => {
-      const c = new THREE.Mesh(o.geometry, this.chamMat);
-      c.renderOrder = 999;
-      o.add(c);
-      return c;
-    });
-
-    // --- vision cone on the floor.
+    // --- per neighbor: chams (a see-through copy of every mesh, drawn on top of everything),
+    // the vision cone on the floor, his planned route and his line of sight to you.
     const segs = 24;
     const pts = [0, 0, 0];
     for (let i = 0; i <= segs; i++) {
@@ -86,25 +73,38 @@ export class Debug {
     const coneGeo = new THREE.BufferGeometry();
     coneGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     coneGeo.setIndex(idx);
-    this.coneMat = new THREE.MeshBasicMaterial({ color: 0x4cd964, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false });
-    this.cone = new THREE.Mesh(coneGeo, this.coneMat);
-    this.cone.renderOrder = 5;
-    this.group.add(this.cone);
-
-    // --- his planned route and his line of sight to you.
-    this.pathGeo = new THREE.BufferGeometry();
-    this.pathGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 80), 3));
-    this.path = new THREE.Line(this.pathGeo, overlayMat(0x33d6ff));
-    this.path.renderOrder = 998;
-    this.path.frustumCulled = false;
-    this.group.add(this.path);
-    this.losGeo = new THREE.BufferGeometry();
-    this.losGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-    this.losMat = overlayMat(0xffffff, 0.8);
-    this.los = new THREE.Line(this.losGeo, this.losMat);
-    this.los.renderOrder = 998;
-    this.los.frustumCulled = false;
-    this.group.add(this.los);
+    this.povIdx = 0;
+    this.rigs = [game.neighbor, ...(game.extras || [])].map((n) => {
+      const chamMat = new THREE.MeshBasicMaterial({ color: 0x4cd964, transparent: true, opacity: 0.45, depthTest: false, depthWrite: false });
+      const meshes = [];
+      n.model.root.traverse((o) => {
+        if (o.isMesh) meshes.push(o);
+      });
+      const chams = meshes.map((o) => {
+        const c = new THREE.Mesh(o.geometry, chamMat);
+        c.renderOrder = 999;
+        o.add(c);
+        return c;
+      });
+      const coneMat = new THREE.MeshBasicMaterial({ color: 0x4cd964, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false });
+      const cone = new THREE.Mesh(coneGeo, coneMat);
+      cone.renderOrder = 5;
+      this.group.add(cone);
+      const pathGeo = new THREE.BufferGeometry();
+      pathGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3 * 80), 3));
+      const path = new THREE.Line(pathGeo, overlayMat(0x33d6ff));
+      path.renderOrder = 998;
+      path.frustumCulled = false;
+      this.group.add(path);
+      const losGeo = new THREE.BufferGeometry();
+      losGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      const losMat = overlayMat(0xffffff, 0.8);
+      const los = new THREE.Line(losGeo, losMat);
+      los.renderOrder = 998;
+      los.frustumCulled = false;
+      this.group.add(los);
+      return { n, chamMat, chams, coneMat, cone, pathGeo, path, losGeo, losMat, los };
+    });
 
     // --- noise rings (how far a noise carries).
     const ring = [];
@@ -176,7 +176,7 @@ export class Debug {
       m.renderOrder = 995;
       this.graph.add(m);
     }
-    for (const st of this.game.neighbor.stations) {
+    for (const st of this.game.allStations || this.game.neighbor.stations) {
       const m = new THREE.Mesh(nodeGeo, choreMat);
       m.position.copy(st.stand).y += 0.3;
       m.scale.setScalar(2);
@@ -186,6 +186,26 @@ export class Debug {
     }
     this.graph.visible = false;
     this.group.add(this.graph);
+  }
+
+  /** Every chams mesh of every neighbor. */
+  get chams() {
+    return this.rigs.flatMap((r) => r.chams);
+  }
+
+  /** The neighbors that exist in this game (just the one online). */
+  active() {
+    return this.rigs.filter((r) => this.game.crowd().includes(r.n));
+  }
+
+  /** The neighbor the panel, the neighbor's-view camera and the banner are about: the one being watched, or the closest. */
+  subject() {
+    const list = this.game.crowd();
+    if (this.view === 'pov') return list[Math.min(this.povIdx, list.length - 1)];
+    const cam = this.game.camera.position;
+    let best = list[0];
+    for (const n of list) if (n.pos.distanceToSquared(cam) < best.pos.distanceToSquared(cam)) best = n;
+    return best;
   }
 
   /** Turn the whole overlay on or off (the ` key mid-game). */
@@ -209,10 +229,9 @@ export class Debug {
   }
 
   /** The neighbor's broad mode, as shown in the panel. */
-  mode() {
-    const n = this.game.neighbor;
+  mode(n = this.subject()) {
     if (this.frozen) return 'FROZEN';
-    if (n.state === 'chase' || n.state === 'openCloset' || this.game.state === 'caught') return 'ATTACK';
+    if (n.state === 'chase' || n.state === 'openCloset' || (this.game.state === 'caught' && n === this.game.catcher)) return 'ATTACK';
     if (n.state === 'stunned') return 'STUNNED';
     if (n.state === 'investigate' || n.awareness > 0.05) return 'SUSPICIOUS';
     return 'IDLE';
@@ -222,7 +241,16 @@ export class Debug {
   onKey(code) {
     switch (code) {
       case 'KeyV':
-        this.setView(this.view === 'pov' ? 'player' : 'pov');
+        // Through each neighbor's eyes in turn, then back to yours.
+        if (this.view === 'pov' && this.povIdx + 1 < this.game.crowd().length) {
+          this.povIdx++;
+          this.game.toast(`Debug: neighbor ${this.povIdx + 1}'s view`, 1200);
+        } else if (this.view === 'pov') {
+          this.setView('player');
+        } else {
+          this.povIdx = 0;
+          this.setView('pov');
+        }
         return true;
       case 'KeyB':
         this.setView(this.view === 'free' ? 'player' : 'free');
@@ -286,9 +314,10 @@ export class Debug {
   bannerText() {
     const vr = this.inVR();
     if (this.view === 'pov') {
-      const n = this.game.neighbor;
+      const n = this.subject();
       const asleep = n.task && n.task.phase === 'do' && n.task.chore.asleep;
-      return `NEIGHBOR'S VIEW  ·  ${asleep ? '(asleep, eyes closed)  ·  ' : ''}${vr ? 'hold left stick + A to return' : 'V to return'}`;
+      const which = this.game.crowd().length > 1 ? ` ${this.povIdx + 1}` : '';
+      return `NEIGHBOR${which}'S VIEW  ·  ${asleep ? '(asleep, eyes closed)  ·  ' : ''}${vr ? 'hold left stick + A to return' : 'V next neighbor / return'}`;
     }
     if (this.view === 'free') {
       return vr
@@ -346,7 +375,6 @@ export class Debug {
   // ================================================================ update
   update(dt) {
     const g = this.game;
-    const n = g.neighbor;
     const p = g.player;
     const mode = this.mode();
     const color = MODE_COLORS[mode];
@@ -359,47 +387,57 @@ export class Debug {
       this.fps.n = 0;
     }
 
-    this.chamMat.color.set(color);
-    this.coneMat.color.set(color);
+    const active = this.active();
+    for (const rig of this.rigs) {
+      const on = active.includes(rig);
+      rig.cone.visible = rig.path.visible = rig.los.visible = on && this.group.visible;
+      for (const c of rig.chams) c.visible = on && this.group.visible && !(this.view === 'pov' && rig.n === this.subject());
+      if (!on) continue;
+      const n = rig.n;
+      const rmode = this.mode(n);
+      const rcolor = MODE_COLORS[rmode];
+      rig.chamMat.color.set(rcolor);
+      rig.coneMat.color.set(rcolor);
 
-    // Vision cone (hidden while he's asleep).
-    const asleep = n.task && n.task.phase === 'do' && n.task.chore.asleep;
-    this.cone.visible = !asleep;
-    this.cone.position.set(n.pos.x, n.pos.y + 0.04, n.pos.z);
-    this.cone.rotation.y = n.heading;
-    this.cone.scale.setScalar(p.crouching ? 0.6 : 1);
+      // Vision cone (hidden while he's asleep).
+      const asleep = n.task && n.task.phase === 'do' && n.task.chore.asleep;
+      rig.cone.visible = !asleep;
+      rig.cone.position.set(n.pos.x, n.pos.y + 0.04, n.pos.z);
+      rig.cone.rotation.y = n.heading;
+      rig.cone.scale.setScalar(p.crouching ? 0.6 : 1);
 
-    // Route.
-    const arr = this.pathGeo.attributes.position.array;
-    let k = 0;
-    arr[k++] = n.pos.x;
-    arr[k++] = n.pos.y + 0.1;
-    arr[k++] = n.pos.z;
-    const moving = n.state !== 'task' || (n.task && n.task.phase === 'goto');
-    if (moving) {
-      for (let i = n.pathIdx; i < n.path.length && k < arr.length - 3; i++) {
-        arr[k++] = n.path[i].x;
-        arr[k++] = n.path[i].y + 0.1;
-        arr[k++] = n.path[i].z;
+      // Route.
+      const arr = rig.pathGeo.attributes.position.array;
+      let k = 0;
+      arr[k++] = n.pos.x;
+      arr[k++] = n.pos.y + 0.1;
+      arr[k++] = n.pos.z;
+      const moving = n.state !== 'task' || (n.task && n.task.phase === 'goto');
+      if (moving) {
+        for (let i = n.pathIdx; i < n.path.length && k < arr.length - 3; i++) {
+          arr[k++] = n.path[i].x;
+          arr[k++] = n.path[i].y + 0.1;
+          arr[k++] = n.path[i].z;
+        }
       }
-    }
-    this.pathGeo.setDrawRange(0, k / 3);
-    this.pathGeo.attributes.position.needsUpdate = true;
+      rig.pathGeo.setDrawRange(0, k / 3);
+      rig.pathGeo.attributes.position.needsUpdate = true;
 
-    // Line of sight to you: green if he can see you, grey if blocked/out of view.
-    const la = this.losGeo.attributes.position.array;
-    const eye = n.eye(this.v);
-    la[0] = eye.x;
-    la[1] = eye.y;
-    la[2] = eye.z;
-    const pe = p.eye(new THREE.Vector3());
-    la[3] = pe.x;
-    la[4] = pe.y;
-    la[5] = pe.z;
-    this.losGeo.attributes.position.needsUpdate = true;
-    this.losMat.color.set(n.sees ? 0x4cd964 : 0x777777);
-    this.losMat.opacity = n.sees ? 0.9 : 0.35;
-    this.los.visible = eye.distanceTo(pe) < VIEW_RANGE + 5;
+      // Line of sight to you: green if he can see you, grey if blocked/out of view.
+      const la = rig.losGeo.attributes.position.array;
+      const eye = n.eye(this.v);
+      la[0] = eye.x;
+      la[1] = eye.y;
+      la[2] = eye.z;
+      const pe = p.eye(new THREE.Vector3());
+      la[3] = pe.x;
+      la[4] = pe.y;
+      la[5] = pe.z;
+      rig.losGeo.attributes.position.needsUpdate = true;
+      rig.losMat.color.set(n.sees ? 0x4cd964 : 0x777777);
+      rig.losMat.opacity = n.sees ? 0.9 : 0.35;
+      rig.los.visible = eye.distanceTo(pe) < VIEW_RANGE + 5;
+    }
 
     for (const r of this.rings) {
       if (!r.l.visible) continue;
@@ -436,7 +474,7 @@ export class Debug {
       // The headset owns the camera: move the play space instead (vr.js).
       g.vr.debugCamera(this, dt);
       if (this.view === 'pov') {
-        const n = g.neighbor;
+        const n = this.subject();
         const asleep = n.task && n.task.phase === 'do' && n.task.chore.asleep;
         $('fade').style.opacity = asleep ? '0.85' : '0';
       }
@@ -444,12 +482,13 @@ export class Debug {
     }
     if (this.view === 'pov') {
       // Look out of his eyes: follows his head, so it works sitting and lying down too.
-      const head = g.neighbor.model.head;
-      g.neighbor.model.root.updateMatrixWorld(true);
+      const nb = this.subject();
+      const head = nb.model.head;
+      nb.model.root.updateMatrixWorld(true);
       head.localToWorld(cam.position.set(0, 0.28, 0.3));
       head.getWorldQuaternion(this.q);
       cam.quaternion.copy(this.q).multiply(FLIP);
-      const asleep = g.neighbor.task && g.neighbor.task.phase === 'do' && g.neighbor.task.chore.asleep;
+      const asleep = nb.task && nb.task.phase === 'do' && nb.task.chore.asleep;
       this.banner.textContent = this.bannerText();
       $('fade').style.opacity = asleep ? '0.85' : '0';
     } else if (this.view === 'free') {
@@ -481,11 +520,16 @@ export class Debug {
     ctx.clearRect(0, 0, W, H);
     if (this.game.state === 'menu') return;
     const g = this.game;
-    const n = g.neighbor;
     ctx.font = '12px ui-monospace, Menlo, Consolas, monospace';
     ctx.textAlign = 'center';
 
-    if (this.view !== 'pov') {
+    const crowd = g.crowd();
+    for (let ni = 0; ni < crowd.length; ni++) {
+      const n = crowd[ni];
+      if (this.view === 'pov' && n === this.subject()) continue;
+      const mode = this.mode(n);
+      const color = MODE_COLORS[mode];
+      const name = crowd.length > 1 ? `NEIGHBOR ${ni + 1}` : 'NEIGHBOR';
       const feet = this.project(n.pos);
       const top = this.project(new THREE.Vector3(n.pos.x, n.pos.y + 2.05, n.pos.z));
       const dist = n.pos.distanceTo(g.camera.position);
@@ -496,7 +540,7 @@ export class Debug {
         ctx.lineWidth = 2;
         ctx.strokeRect(feet.x - w / 2, top.y, w, h);
         const task = n.task ? ` · ${n.task.station.type}` : '';
-        const label = `NEIGHBOR  ${dist.toFixed(1)}m  ${mode}${task}`;
+        const label = `${name}  ${dist.toFixed(1)}m  ${mode}${task}`;
         const tw = ctx.measureText(label).width + 10;
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
         ctx.fillRect(feet.x - tw / 2, top.y - 20, tw, 16);
@@ -516,7 +560,7 @@ export class Debug {
         const ax = W / 2 - Math.sin(rel) * (W / 2 - 40);
         const ay = H / 2 + Math.cos(rel) * (H / 2 - 40) * (Math.abs(rel) > Math.PI / 2 ? 1 : -1);
         ctx.fillStyle = color;
-        ctx.fillText(`▲ NEIGHBOR ${dist.toFixed(0)}m`, Math.max(60, Math.min(W - 60, ax)), Math.max(20, Math.min(H - 20, ay)));
+        ctx.fillText(`▲ ${name} ${dist.toFixed(0)}m`, Math.max(60, Math.min(W - 60, ax)), Math.max(20, Math.min(H - 20, ay)));
       }
     }
 
@@ -545,7 +589,7 @@ export class Debug {
   /** The info panel as rows, shared by the HTML panel and the VR wrist panel. */
   panelRows(mode, color) {
     const g = this.game;
-    const n = g.neighbor;
+    const n = this.subject();
     const p = g.player;
     const r3 = (v) => `${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)}`;
     const ago = (t) => (t === undefined ? 'never' : `${(g.time - t).toFixed(1)}s ago`);
@@ -568,7 +612,7 @@ export class Debug {
     const sec = (text) => ({ t: 'sec', text });
     return [
       { t: 'title', text: `DEBUG · House #${g.seed}` },
-      sec('NEIGHBOR'),
+      sec(g.crowd().length > 1 ? `NEIGHBOR ${g.crowd().indexOf(n) + 1} OF ${g.crowd().length} (nearest)` : 'NEIGHBOR'),
       row('Mode', mode, color),
       row('State', `${n.state}${this.frozen ? ' (frozen)' : ''}`),
       row('Chore', chore),
@@ -588,7 +632,7 @@ export class Debug {
       row('Holding', p.held ? p.held.name : '—'),
       sec('HOUSE'),
       row('Locks left', `${locks.length} (${lockText})`),
-      row('Chores here', [...new Set(n.stations.map((s) => s.type))].join(', ')),
+      row('Chores here', [...new Set(n.stations.map((s) => s.type))].join(', ') + (n.floorBand ? ` (floors ${n.floorBand[0]}-${n.floorBand[1]})` : '')),
       sec('RENDER'),
       row('FPS', `${this.fps.value} · ${g.preset.label} · ${Math.round(g.scale * 100)}% res`),
       row('Draw calls', `${info.calls} · ${(info.triangles / 1000).toFixed(0)}k tris`),
@@ -746,18 +790,20 @@ export class Debug {
     for (const s of this.tags.values()) s.visible = false;
     if (!vr) return;
     const g = this.game;
-    const n = g.neighbor;
     const cam = g.camera.getWorldPosition(new THREE.Vector3());
-    if (this.view !== 'pov') {
-      const s = this.tag('neighbor');
+    const crowd = g.crowd();
+    crowd.forEach((n, ni) => {
+      if (this.view === 'pov' && n === this.subject()) return;
+      const nmode = this.mode(n);
+      const s = this.tag(ni ? `neighbor${ni}` : 'neighbor');
       if (refresh || !s.userData.text) {
         const task = n.task ? ` · ${n.task.station.type}` : '';
-        this.drawTag(s, `NEIGHBOR ${n.pos.distanceTo(cam).toFixed(1)}m ${mode}${task}`, color, mode === 'ATTACK' ? 1 : n.awareness);
+        this.drawTag(s, `NEIGHBOR${crowd.length > 1 ? ` ${ni + 1}` : ''} ${n.pos.distanceTo(cam).toFixed(1)}m ${nmode}${task}`, MODE_COLORS[nmode], nmode === 'ATTACK' ? 1 : n.awareness);
       }
       this.placeTag(s, this.v.set(n.pos.x, n.pos.y + 2.35, n.pos.z), cam);
-    }
+    });
     if (this.showGraph) {
-      for (const st of n.stations) {
+      for (const st of g.allStations || g.neighbor.stations) {
         const s = this.tag(st);
         this.drawTag(s, st.type, '#ff4fd8');
         this.placeTag(s, this.v.copy(st.stand).setY(st.stand.y + 0.6), cam);

@@ -661,7 +661,7 @@ export class VR {
     }
     this.rig.updateMatrixWorld(true);
     if (dbg.view === 'pov') {
-      const n = g.neighbor;
+      const n = dbg.subject();
       n.model.root.updateMatrixWorld(true);
       const eye = n.model.head.localToWorld(this.tmp.set(0, 0.28, 0.3));
       this.setRig(eye, n.heading + Math.PI - this.povYawOffset);

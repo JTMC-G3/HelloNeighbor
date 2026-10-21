@@ -328,6 +328,11 @@ a quick click of the left stick toggles fast mode, and the right stick snap turn
 neighbor's view you ride along in his head and can still look around. The headset shows what
 each button does while you hold the left stick in. The keyboard keys above work in VR too.
 
+With the three neighbors (single player, skyscraper branch), debug mode shows every one of them:
+chams through walls, a vision cone, route and line of sight each, and an ESP box labelled
+NEIGHBOR 1/2/3. **K** freezes all of them, **V** cycles through each neighbor's eyes in turn
+(then back to yours), and the info panel is about whichever neighbor is nearest (or being watched).
+
 ---
 
 ## ⚙️ Performance / Chromebooks
