@@ -11,13 +11,13 @@ const FOV_COS = Math.cos(THREE.MathUtils.degToRad(62));
 const visionFilter = (c) => c.kind !== 'glass';
 const wallsOnly = (c) => c.kind === 'wall';
 
-function buildModel(textures) {
+function buildModel(textures, tint = {}) {
   const root = new THREE.Group();
   const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.75, ...o });
   const skin = std(0xe6b38f);
-  const shirt = std(0xdfe7ee);
+  const shirt = std(tint.shirt ?? 0xdfe7ee);
   const vest = std(0xffffff, { map: textures.vest });
-  const pants = std(0x3a3f55);
+  const pants = std(tint.pants ?? 0x3a3f55);
   const shoes = std(0x2a1d14);
   const hair = std(0x2b2118);
   const dark = std(0x111111);
@@ -92,11 +92,11 @@ function buildModel(textures) {
 }
 
 export class Neighbor {
-  constructor(scene, textures, physics, nav, sound) {
+  constructor(scene, textures, physics, nav, sound, tint = {}) {
     this.physics = physics;
     this.nav = nav;
     this.sound = sound;
-    this.model = buildModel(textures);
+    this.model = buildModel(textures, tint);
     scene.add(this.model.root);
     this.ch = {
       pos: new THREE.Vector3(),
@@ -704,7 +704,7 @@ export class Neighbor {
         const c = this.closet;
         this.turnTo(Math.atan2(c.inside.x - this.ch.pos.x, c.inside.z - this.ch.pos.z), dt, 10);
         this.closetT += dt;
-        if (this.closetT > 0.55) game.neighborCaught(player);
+        if (this.closetT > 0.55) game.neighborCaught(player, this);
         break;
       }
       case 'investigate': {
@@ -803,7 +803,7 @@ export class Neighbor {
     if (this.ch.pos.y < -10) this.reset();
 
     // Catch.
-    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && !player.hidden && !ghost) game.neighborCaught(player);
+    if (this.state === 'chase' && toP < 1.05 && dy < 1.3 && !player.hidden && !ghost) game.neighborCaught(player, this);
 
     this.animate(dt);
   }

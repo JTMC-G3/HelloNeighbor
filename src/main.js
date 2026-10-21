@@ -5,6 +5,7 @@ import { buildWorld, SPAWN } from './world.js';
 import { Nav } from './nav.js';
 import { Player } from './player.js';
 import { Neighbor } from './neighbor.js';
+import { FLOORS } from './housegen.js';
 import { Sound } from './audio.js';
 import { PRESETS, detectQuality, loadSetting, saveSetting, setMaterialQuality, adapt } from './quality.js';
 import { randomSeed, seedFromText, seedFromUrl } from './rng.js';
@@ -120,6 +121,7 @@ class Game {
       st.via = this.nav.approachTo(st.stand);
       return !!st.via;
     }));
+    this.setupCrowd();
     for (const el of document.querySelectorAll('.seedLabel')) el.textContent = `House #${this.seed}`;
     this.player.spawn(SPAWN, 0);
     this.vr = new VR(this);
@@ -623,6 +625,9 @@ class Game {
   startOnline(role) {
     this.sound.init();
     this.online = true;
+    for (const o of this.extras || []) o.model.root.visible = false;
+    // (Multiplayer has the one neighbor: he gets every chore in the house again.)
+    if (this.allStations) this.neighbor.setChores(this.allStations);
     this.role = role;
     this.player.role = role;
     this.player.id = this.mp.myId;
@@ -713,6 +718,41 @@ class Game {
   }
 
   // ============================================================== helpers
+  /**
+   * Three neighbors share the house (single player): the usual one, who keeps to the bottom two
+   * floors, the yard and the basement door, and two more who each haunt a band of floors above,
+   * with their own chores and patrol routes. In multiplayer only the first one exists.
+   */
+  setupCrowd() {
+    const plan = this.world.plan;
+    const nd = this.world.navData;
+    const floorOfRoom = (id) => (id >= 0 ? plan.rooms[id].floor : 0);
+    const mid = 2 + Math.ceil((FLOORS - 2) / 2);
+    const bands = [[0, 1], [2, mid - 1], [mid, FLOORS - 1]];
+    const mine = this.neighbor.stations;
+    this.allStations = mine;
+    this.neighbor.setChores(mine.filter((st) => floorOfRoom(st.room) <= bands[0][1]));
+    this.neighbor.floorBand = bands[0];
+    this.extras = [];
+    if (FLOORS < 4) return;
+    const tints = [{ shirt: 0xe58a8a, pants: 0x4a3a3a }, { shirt: 0x8ae5a6, pants: 0x2f4a3c }];
+    for (let k = 1; k < 3; k++) {
+      const [lo, hi] = bands[k];
+      const n = new Neighbor(this.scene, this.world.textures, this.physics, this.nav, this.sound, tints[k - 1]);
+      const rooms = plan.rooms.filter((r) => r.floor >= lo && r.floor <= hi);
+      const start = rooms.find((r) => r.type !== 'stairs' && r.floor === lo) || rooms[0];
+      n.setRoutes(rooms.map((r) => [`r${r.id}`, r.type === 'stairs' ? 1 : r.area >= 2 ? 3 : 2]), `r${start.id}`, `r${start.id}`);
+      n.setChores(mine.filter((st) => floorOfRoom(st.room) >= lo && floorOfRoom(st.room) <= hi));
+      n.floorBand = bands[k];
+      this.extras.push(n);
+    }
+  }
+
+  /** Every neighbor on the loose right now. */
+  crowd() {
+    return this.online || !this.extras ? [this.neighbor] : [this.neighbor, ...this.extras];
+  }
+
   onProperty(p) {
     if (p.y < -0.5) return true;
     const y = this.world.yard;
@@ -966,7 +1006,7 @@ class Game {
         this.sfx.door(d.center, d.open);
         // Doors creak: the neighbor may hear it if he's close.
         this.emitNoise(d.center, 3.5, actor);
-        this.neighbor.openedDoors.delete(d);
+        for (const o of this.crowd()) o.openedDoors.delete(d);
         break;
       }
       case 'lock':
@@ -1133,7 +1173,7 @@ class Game {
     const spot = p.hidden;
     if (!spot || this.hideAnim) return;
     p.hidden = null;
-    if (!this.online || this.mp.isHost) this.neighbor.noteHidden(p, false);
+    if (!this.online || this.mp.isHost) for (const o of this.crowd()) o.noteHidden(p, false);
     spot.setVisible(true);
     $('hideOverlay').classList.add('hidden');
     this.hideAnim = { spot, dir: 'out', t: 0, from: p.ch.pos.clone(), yaw0: p.yaw, pitch0: p.pitch };
@@ -1150,7 +1190,7 @@ class Game {
     const turn = (from, to, k) => from + Math.atan2(Math.sin(to - from), Math.cos(to - from)) * k;
     if (a.dir === 'in') {
       // 0-0.25 doors swing open, 0.1-0.5 step in and turn round, 0.45-0.7 pull the doors shut.
-      if (n.sees && n.focus === p) a.seen = true;
+      if (this.crowd().some((o) => o.sees && o.focus === p)) a.seen = true;
       const k = ease((a.t - 0.1) / 0.4);
       p.ch.pos.lerpVectors(a.from, spot.inside, k);
       if (!p.vr) {
@@ -1164,7 +1204,7 @@ class Game {
         spot.setVisible(false);
         $('hideOverlay').classList.remove('hidden');
         // If he watched you climb in, he knows exactly where you are.
-        if (!this.online || this.mp.isHost) n.noteHidden(p, a.seen || (n.focus === p && (n.sees || (n.state === 'chase' && n.lost < 0.8))));
+        if (!this.online || this.mp.isHost) for (const o of this.crowd()) o.noteHidden(p, a.seen || (o.focus === p && (o.sees || (o.state === 'chase' && o.lost < 0.8))));
       }
     } else {
       const k = ease((a.t - 0.08) / 0.3);
@@ -1199,8 +1239,9 @@ class Game {
   }
 
   /** The neighbor (AI) caught someone. */
-  neighborCaught(player) {
-    this.neighbor.startGrab(player);
+  neighborCaught(player, who = this.neighbor) {
+    this.catcher = who;
+    who.startGrab(player);
     if (this.online) this.mp.catchPlayer(player, player === this.player ? null : `He caught ${player.name}!`);
     else this.caught();
   }
@@ -1562,7 +1603,6 @@ class Game {
   }
 
   updateItems(dt) {
-    const nb = this.neighbor;
     for (const it of this.world.items) {
       if (it.held || it.consumed || it.sleeping) continue;
       const contact = this.physics.stepItem(
@@ -1588,14 +1628,17 @@ class Game {
 
       // Beaning the neighbor stuns him.
       if (it.thrown && it.vel.lengthSq() > 16 && it.thrownBy && it.thrownBy.role !== 'neighbor') {
-        const dx = it.pos.x - nb.pos.x;
-        const dz = it.pos.z - nb.pos.z;
-        if (Math.hypot(dx, dz) < it.radius + 0.4 && it.pos.y > nb.pos.y && it.pos.y < nb.pos.y + 2.05) {
-          if (this.online && this.mp.mode === 'versus') this.stunNeighborPlayer(it.thrownBy);
-          else nb.hit(this, it.thrownBy || this.player);
-          it.vel.x *= -0.3;
-          it.vel.z *= -0.3;
-          it.thrown = false;
+        for (const nb of this.crowd()) {
+          const dx = it.pos.x - nb.pos.x;
+          const dz = it.pos.z - nb.pos.z;
+          if (Math.hypot(dx, dz) < it.radius + 0.4 && it.pos.y > nb.pos.y && it.pos.y < nb.pos.y + 2.05) {
+            if (this.online && this.mp.mode === 'versus') this.stunNeighborPlayer(it.thrownBy);
+            else nb.hit(this, it.thrownBy || this.player);
+            it.vel.x *= -0.3;
+            it.vel.z *= -0.3;
+            it.thrown = false;
+            break;
+          }
         }
       }
 
@@ -1698,7 +1741,7 @@ class Game {
     this.caughtT += dt;
     const t = this.caughtT;
     const p = this.player;
-    const n = this.neighbor;
+    const n = this.catcher || this.neighbor;
     if (t0 < 0.3 && t >= 0.3) this.sound.grab();
 
     // Pulled out of the wardrobe towards him.
@@ -1740,7 +1783,8 @@ class Game {
     if (t > 3.2) {
       $('caughtText').classList.add('hidden');
       p.spawn(this.spawnPoint(), 0);
-      // (He resets himself: see Neighbor.startGrab.)
+      // (He resets himself: see Neighbor.startGrab. The others go back to what they were doing.)
+      for (const o of this.crowd()) if (o !== n) o.reset();
       if (!this.online) {
         for (const d of this.world.doors) {
           if (d.id === 'front') d.setOpen(false);
@@ -1840,10 +1884,11 @@ class Game {
   updateHUD() {
     if (this.online) this.updateMpStatus();
     // Only touch the DOM when something visibly changed (avoids per-frame layout work).
-    const n = this.neighbor;
-    const chase = n.state === 'chase';
-    const alert = n.awareness > 0.05 || chase;
-    const fill = Math.round((chase ? 1 : n.awareness) * 50) * 2;
+    const crowd = this.crowd();
+    const chase = crowd.some((o) => o.state === 'chase');
+    const awareness = Math.max(...crowd.map((o) => o.awareness));
+    const alert = awareness > 0.05 || chase;
+    const fill = Math.round((chase ? 1 : awareness) * 50) * 2;
     const key = `${alert}|${chase}|${fill}`;
     if (key === this.hudKey) return;
     this.hudKey = key;
@@ -1925,7 +1970,7 @@ class Game {
         this.camera.lookAt(0, 4, -16);
       }
       this.world.update(dt, this.camWorld());
-      this.neighbor.update(dt, p, this);
+      for (const o of this.crowd()) o.update(dt, p, this);
     } else if (this.state === 'playing' || this.state === 'caught' || this.state === 'ending') {
       const playing = this.state === 'playing';
       if (this.vr.active) this.vr.update(dt);
@@ -1989,18 +2034,26 @@ class Game {
             continue;
           }
           // (He doesn't go and investigate the box he just punted.)
-          if (nz.owner === this.neighbor) continue;
-          const heard = nz.pos.distanceTo(this.neighbor.pos) < nz.radius;
-          if (heard && this.aiActive()) this.neighbor.hear(nz.pos, this, nz.radius);
+          const crowd = this.crowd();
+          if (crowd.includes(nz.owner)) continue;
+          let heard = false;
+          for (const o of crowd) {
+            if (nz.pos.distanceTo(o.pos) >= nz.radius) continue;
+            if (o === this.neighbor) heard = true;
+            if (this.aiActive()) o.hear(nz.pos, this, nz.radius);
+          }
           if (this.debug) this.debug.noise(nz.pos, nz.radius, heard);
         }
         this.noises.length = 0;
       }
-      if (this.aiActive()) this.neighbor.update(dt, this.aiPlayers(), this);
+      if (this.aiActive()) {
+        const who = this.aiPlayers();
+        for (const o of this.crowd()) o.update(dt, who, this);
+      }
       if (this.online) this.mp.update(dt);
       this.updateBoxes(dt);
       if (playing) {
-        if (!this.online && this.neighbor.state !== 'chase') this.sound.setChase(false);
+        if (!this.online && !this.crowd().some((o) => o.state === 'chase')) this.sound.setChase(false);
         if (this.online && this.mp.isHost && this.mp.mode === 'coop') this.sound.setChase(this.neighbor.state === 'chase');
         // (In VR each hand aims its own laser; see vr.js.)
         if (!this.vr.active) this.target = this.altView() ? null : this.findTarget();

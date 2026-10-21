@@ -1261,7 +1261,10 @@ export function buildWorld(scene, physics, seed) {
   }
 
   // Sweeping: a few rooms, at the room's centre (always clear floor).
-  for (const room of rng.shuffle(plan.rooms.filter((r) => r.type !== 'stairs')).slice(0, 3)) {
+  const sweepRooms = rng.shuffle(plan.rooms.filter((r) => r.type !== 'stairs')).slice(0, 3);
+  // ...and every upper floor has a couple too, so there's housework all the way up the tower.
+  for (let f = 2; f < FLOORS; f++) sweepRooms.push(...rng.shuffle(plan.rooms.filter((r) => r.floor === f && r.type !== 'stairs')).slice(0, 2));
+  for (const room of sweepRooms) {
     stations.push({ type: 'sweep', room: room.id, stand: new THREE.Vector3(room.cx, floorY(room.floor), room.cz), heading: rng.range(0, 6.28) });
   }
   // The TV he watches is the one in the same room as the couch.

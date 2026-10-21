@@ -15,6 +15,14 @@ things are hidden are all generated fresh each time you play.
 > round to the south end, take the next flight), and the keys can be hidden on any floor.
 > Change `FLOORS` in `src/housegen.js` for a different height. Being 4x the house, it's heavier
 > to draw (about 2.6x the draw calls from the street), so it may run slower on Chromebooks.
+>
+> **More to find, and three neighbors.** A tall house has 7-9 locked doors (they favour the upper
+> floors), eight key colours (orange, pink, teal and white join the usual ones), and the keys are
+> hidden high up. The basement door gets a second padlock, with its key near the top of the tower.
+> In single player three neighbors share the house: the usual one (bottom two floors, the yard and
+> the basement door; he still wanders up now and then), a pink-shirted one on floors 2-4 and a
+> green-shirted one on floors 5-7. Each has their own chores and patrol, they all hear you, and
+> any of them can catch you. Multiplayer still has the one neighbor.
 
 > **Disclaimer:** this is an unofficial, non-commercial fan tribute. It is not affiliated
 > with or endorsed by tinyBuild or Dynamic Pixels. It contains no assets from the original

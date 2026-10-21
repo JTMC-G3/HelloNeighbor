@@ -38,7 +38,7 @@ const GROUND_BIG = ['dining', 'study', 'library', 'music', 'workshop', 'den'];
 const GROUND_SMALL = ['bathroom', 'pantry', 'laundry', 'storage'];
 const UPPER_BIG = ['bedroom', 'playroom', 'study', 'library', 'sewing', 'attic'];
 const UPPER_SMALL = ['bathroom', 'storage', 'nursery', 'closet'];
-const KEY_COLORS = ['blue', 'green', 'yellow', 'purple'];
+const KEY_COLORS = ['blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'teal', 'white'];
 
 export function generatePlan(seed) {
   const rng = new Rng(seed);
@@ -347,9 +347,12 @@ function puzzle(plan, rng) {
   };
 
   const total = plan.rooms.length;
-  const K = total >= 16 ? rng.int(2, 4) : rng.int(2, 3);
+  // A tall house gets a lot more locks, and they favour the upper floors, so you have to
+  // work your way up (and back down) the stairwell for keys.
+  const K = total >= 40 ? rng.int(7, 9) : total >= 16 ? rng.int(2, 4) : rng.int(2, 3);
   const locked = new Set();
-  for (const d of rng.shuffle(interior)) {
+  const byHeight = rng.shuffle(interior).sort((p, q) => (q.floor >= 1 ? 1 : 0) - (p.floor >= 1 ? 1 : 0) + (rng.next() - 0.5) * 0.8);
+  for (const d of byHeight) {
     if (locked.size >= K) break;
     const before = reach(locked).size;
     locked.add(d);
@@ -373,29 +376,34 @@ function puzzle(plan, rng) {
 
   const colors = rng.shuffle(KEY_COLORS);
   let crowbarPlaced = false;
-  const roomFor = (i) => {
+  const roomFor = (i, minFloor = 0) => {
     const prev = i > 0 ? stages[i - 1] : new Set();
     const fresh = [...stages[i]].filter((r) => r !== 'out' && !prev.has(r));
     const all = [...stages[i]].filter((r) => r !== 'out');
     const ok = (ids) => ids.filter((id) => plan.rooms[id].type !== 'stairs');
-    const pool = ok(fresh).length ? ok(fresh) : ok(all).length ? ok(all) : all;
+    let pool = ok(fresh).length ? ok(fresh) : ok(all).length ? ok(all) : all;
+    let high = pool.filter((id) => plan.rooms[id].floor >= minFloor);
+    if (!high.length) high = ok(all).filter((id) => plan.rooms[id].floor >= minFloor);
+    if (high.length) pool = high;
     return rng.pick(pool);
   };
-  const need = (lock, stage) => {
-    if (lock.type === 'key') plan.items.push({ type: `key:${lock.color}`, room: roomFor(stage) });
+  const need = (lock, stage, minFloor = 0) => {
+    if (lock.type === 'key') plan.items.push({ type: `key:${lock.color}`, room: roomFor(stage, minFloor) });
     else if (!crowbarPlaced) {
-      plan.items.push({ type: 'crowbar', room: roomFor(stage) });
+      plan.items.push({ type: 'crowbar', room: roomFor(stage, minFloor) });
       crowbarPlaced = true;
     }
   };
   order.forEach((d, i) => {
     const lock = rng.chance(0.3) ? { type: 'boards' } : { type: 'key', color: colors.shift() || 'blue' };
     d.locks.push(lock);
-    need(lock, i);
+    need(lock, i, total >= 40 ? 2 : 0);
   });
   plan.basementLocks.push({ type: 'key', color: 'red' });
+  // The basement door has a second padlock in a tall house, with its key at the very top.
+  if (total >= 40) plan.basementLocks.push({ type: 'key', color: colors.shift() || 'white' });
   if (rng.chance(0.45)) plan.basementLocks.push({ type: 'boards' });
-  for (const lock of plan.basementLocks) need(lock, stages.length - 1);
+  for (const lock of plan.basementLocks) need(lock, stages.length - 1, total >= 40 ? 5 : 0);
   plan.lockOrder = order;
 }
 

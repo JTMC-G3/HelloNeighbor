@@ -5,7 +5,7 @@ import { bakeChildren } from './quality.js';
 
 const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...extra });
 
-export const KEY_COLORS = { red: 0xd62828, blue: 0x1f6fe0, green: 0x21a152, yellow: 0xf2c200, purple: 0x8e44ad };
+export const KEY_COLORS = { red: 0xd62828, blue: 0x1f6fe0, green: 0x21a152, yellow: 0xf2c200, purple: 0x8e44ad, orange: 0xf27a1a, pink: 0xff5fa2, teal: 0x14b8a6, white: 0xf2f2f2 };
 
 export const ITEM_TYPES = {
   box: { name: 'Cardboard Box', radius: 0.24, bounce: 0.15, flat: true },
@@ -24,6 +24,10 @@ export const ITEM_TYPES = {
   keyGreen: { name: 'Green Key', radius: 0.07, bounce: 0.3, flat: true, key: 'green' },
   keyYellow: { name: 'Yellow Key', radius: 0.07, bounce: 0.3, flat: true, key: 'yellow' },
   keyPurple: { name: 'Purple Key', radius: 0.07, bounce: 0.3, flat: true, key: 'purple' },
+  keyOrange: { name: 'Orange Key', radius: 0.07, bounce: 0.3, flat: true, key: 'orange' },
+  keyPink: { name: 'Pink Key', radius: 0.07, bounce: 0.3, flat: true, key: 'pink' },
+  keyTeal: { name: 'Teal Key', radius: 0.07, bounce: 0.3, flat: true, key: 'teal' },
+  keyWhite: { name: 'White Key', radius: 0.07, bounce: 0.3, flat: true, key: 'white' },
   crowbar: { name: 'Crowbar', radius: 0.12, bounce: 0.15, flat: true, important: true },
   plate: { name: 'Plate', radius: 0.1, bounce: 0.1, flat: true },
   shoe: { name: 'Shoe', radius: 0.09, bounce: 0.2, flat: true },
@@ -149,7 +153,11 @@ export function makeItemMesh(type, textures) {
     case 'keyBlue':
     case 'keyGreen':
     case 'keyYellow':
-    case 'keyPurple': {
+    case 'keyPurple':
+    case 'keyOrange':
+    case 'keyPink':
+    case 'keyTeal':
+    case 'keyWhite': {
       const color = KEY_COLORS[ITEM_TYPES[type].key];
       const m = std(color, { metalness: 0.6, roughness: 0.3, emissive: color, emissiveIntensity: 0.45 });
       const ring = add(new THREE.TorusGeometry(0.035, 0.012, 8, 18), m, -0.06, 0, 0);
