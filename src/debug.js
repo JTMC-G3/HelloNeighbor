@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CHORES } from './chores.js';
+import { FLOOR, UPPER } from './housegen.js';
 
 /*
  * Debug mode (enabled from the title screen, or toggled mid-game with `).
@@ -336,10 +337,10 @@ export class Debug {
   roomAt(pos) {
     const w = this.game.world;
     if (pos.y < -0.5) return 'Basement';
-    const floor = pos.y > 2.5 ? 1 : 0;
+    const floor = Math.max(0, Math.floor((pos.y - FLOOR + 0.6) / (UPPER - FLOOR)));
     const r = w.plan.rooms.find((rm) => rm.floor === floor && pos.x > rm.x0 && pos.x < rm.x1 && pos.z > rm.z0 && pos.z < rm.z1);
     if (!r) return 'Outside';
-    return `${r.type === 'stairs' ? 'Stairwell' : r.type[0].toUpperCase() + r.type.slice(1)} (${floor ? 'upstairs' : 'ground'})`;
+    return `${r.type === 'stairs' ? 'Stairwell' : r.type[0].toUpperCase() + r.type.slice(1)} (${floor ? `floor ${floor}` : 'ground'})`;
   }
 
   // ================================================================ update

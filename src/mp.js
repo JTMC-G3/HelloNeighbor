@@ -913,7 +913,7 @@ export class Multiplayer {
     if (!st) return 'nothing';
     const label = CHORES[st.type].label;
     const room = st.room >= 0 ? this.game.world.plan.rooms[st.room] : null;
-    const where = room ? `${room.type}${room.floor ? ', upstairs' : ''}` : 'outside';
+    const where = room ? `${room.type}${room.floor ? `, floor ${room.floor}` : ''}` : 'outside';
     return `${label} (${where})`;
   }
 

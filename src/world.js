@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createTextures } from './textures.js';
 import { Item, KEY_COLORS, keyType } from './items.js';
 import { StaticBuilder, prismX, makeMaterials } from './builder.js';
-import { generatePlan, FLOOR, UPPER, BASEMENT, STAIR, CELL } from './housegen.js';
+import { generatePlan, FLOOR, UPPER, BASEMENT, STAIR, CELL, FLOORS, floorY } from './housegen.js';
 import { Rng } from './rng.js';
 
 /*
@@ -133,7 +133,6 @@ export function buildWorld(scene, physics, seed) {
   const siding = rng.pick([M.siding, M.sidingBlue, M.sidingWhite, M.siding]);
   const roofMat = rng.pick([M.roof, M.roofGrey]);
   const roomMat = (id, part) => M[STYLE[plan.rooms[id].type][part]];
-  const floorY = (f) => (f === 0 ? FLOOR : UPPER);
 
   // ---------------------------------------------------------------- windows
   function makeWindow(axis, c, a, b, bottom, top, t) {
@@ -326,11 +325,15 @@ export function buildWorld(scene, physics, seed) {
     physics.add(x0, 0, z0, x1, FLOOR, z1, 'floor');
     deco(M.basement, x0, 0, z0, x1, FLOOR - 0.02, z1);
   }
-  for (const [x0, z0, x1, z1] of rectsMinusHole(HX0, HZ0, HX1, HZ1, holeUpper)) {
-    physics.add(x0, 3.3, z0, x1, UPPER, z1, 'floor');
-    deco(M.plaster, x0, 3.3, z0, x1, UPPER - 0.02, z1);
+  for (let f = 1; f < FLOORS; f++) {
+    const y = floorY(f);
+    for (const [x0, z0, x1, z1] of rectsMinusHole(HX0, HZ0, HX1, HZ1, holeUpper)) {
+      physics.add(x0, y - 0.2, z0, x1, y, z1, 'floor');
+      deco(M.plaster, x0, y - 0.2, z0, x1, y - 0.02, z1);
+    }
   }
-  solid(M.plaster, HX0, 6.3, HZ0, HX1, 6.5, HZ1, 'floor');
+  const TOP = floorY(FLOORS); // top of the house (the roof sits on it)
+  solid(M.plaster, HX0, TOP - 0.2, HZ0, HX1, TOP, HZ1, 'floor');
   for (const r of plan.rooms) {
     const y = floorY(r.floor);
     const hole = r.floor === 0 ? holeGround : holeUpper;
@@ -341,18 +344,18 @@ export function buildWorld(scene, physics, seed) {
   const key = (f, c, a) => `${f}|${c.toFixed(2)}|${a.toFixed(2)}`;
   const xWalls = new Map();
   const zWalls = new Map();
-  for (const f of [0, 1]) {
+  for (let f = 0; f < FLOORS; f++) {
     for (const e of plan.walls[f]) (e.axis === 'x' ? xWalls : zWalls).set(key(f, e.c, e.a), e);
   }
   const tOf = (e) => (e ? (e.exterior ? WT : IT) : 0);
   const xThickAt = (f, x, z) => Math.max(tOf(xWalls.get(key(f, z, x - CELL))), tOf(xWalls.get(key(f, z, x))));
   const zThickAt = (f, x, z) => Math.max(tOf(zWalls.get(key(f, x, z - CELL))), tOf(zWalls.get(key(f, x, z))));
 
-  for (const f of [0, 1]) {
+  for (let f = 0; f < FLOORS; f++) {
     for (const e of plan.walls[f]) {
       const ext = e.exterior;
-      const y0 = f === 0 ? (ext ? 0 : FLOOR) : ext ? UPPER : 3.3;
-      const y1 = f === 0 ? (ext ? UPPER : 3.3) : ext ? 6.5 : 6.3;
+      const y0 = f === 0 ? (ext ? 0 : FLOOR) : ext ? floorY(f) : floorY(f) - 0.2;
+      const y1 = ext ? floorY(f + 1) : floorY(f + 1) - 0.2;
       let from = e.a;
       let to = e.b;
       if (e.axis === 'x') {
@@ -399,12 +402,26 @@ export function buildWorld(scene, physics, seed) {
       door: { id: 'basement', name: 'Basement Door', swing: 1, locks: plan.basementLocks, material: M.doorBasement, neighborIgnore: true },
     }],
   });
-  physics.add(SE, 3.3, HZ0 + STAIR.top, SE + 0.12, 4.45, HZ0 + STAIR.bottom);
-  physics.add(sxi, 3.3, HZ0 + STAIR.bottom, SE + 0.12, 4.45, HZ0 + STAIR.bottom + 0.1);
-  deco(M.darkwood, SE - 0.01, 4.35, HZ0 + STAIR.top, SE + 0.13, 4.45, HZ0 + STAIR.bottom + 0.1);
-  deco(M.darkwood, sxi, 4.35, HZ0 + STAIR.bottom - 0.01, SE + 0.13, 4.45, HZ0 + STAIR.bottom + 0.1);
-  for (let z = HZ0 + STAIR.top; z <= HZ0 + STAIR.bottom; z += 0.5) deco(M.darkwood, SE + 0.03, UPPER, z - 0.02, SE + 0.09, 4.35, z + 0.02);
-  for (let x = sxi + 0.2; x < SE; x += 0.4) deco(M.darkwood, x - 0.02, UPPER, HZ0 + STAIR.bottom + 0.02, x + 0.02, 4.35, HZ0 + STAIR.bottom + 0.08);
+  // Upstairs: the same flight again on every floor, stacked, walled in like the ground floor's.
+  // You come up at the north end, walk round to the south end, and take the next one.
+  for (let f = 1; f + 1 < FLOORS; f++) {
+    const y = floorY(f);
+    for (let i = 1; i <= 16; i++) {
+      const zA = HZ0 + STAIR.bottom - 0.35 * (i - 1);
+      const zB = HZ0 + STAIR.bottom - 0.35 * i;
+      const top = y + 0.2 * i;
+      solid(M.darkwood, sxi, top - 0.2, zB, SE, top, zA, 'floor');
+    }
+    wall({ axis: 'z', c: encX, from: HZ0 + STAIR.top, to: HZ0 + STAIR.bottom, y0: y - 0.2, y1: floorY(f + 1) - 0.2, t: IT, lo: stairWall, hi: stairWall });
+  }
+  // Top floor: a railing round the stair opening.
+  const RY = floorY(FLOORS - 1);
+  physics.add(SE, RY - 0.2, HZ0 + STAIR.top, SE + 0.12, RY + 0.95, HZ0 + STAIR.bottom);
+  physics.add(sxi, RY - 0.2, HZ0 + STAIR.bottom, SE + 0.12, RY + 0.95, HZ0 + STAIR.bottom + 0.1);
+  deco(M.darkwood, SE - 0.01, RY + 0.85, HZ0 + STAIR.top, SE + 0.13, RY + 0.95, HZ0 + STAIR.bottom + 0.1);
+  deco(M.darkwood, sxi, RY + 0.85, HZ0 + STAIR.bottom - 0.01, SE + 0.13, RY + 0.95, HZ0 + STAIR.bottom + 0.1);
+  for (let z = HZ0 + STAIR.top; z <= HZ0 + STAIR.bottom; z += 0.5) deco(M.darkwood, SE + 0.03, RY, z - 0.02, SE + 0.09, RY + 0.85, z + 0.02);
+  for (let x = sxi + 0.2; x < SE; x += 0.4) deco(M.darkwood, x - 0.02, RY, HZ0 + STAIR.bottom + 0.02, x + 0.02, RY + 0.85, HZ0 + STAIR.bottom + 0.08);
   for (let j = 1; j <= 15; j++) {
     const zA = HZ0 + STAIR.top + 0.31 * (j - 1);
     const zB = HZ0 + STAIR.top + 0.31 * j;
@@ -456,7 +473,7 @@ export function buildWorld(scene, physics, seed) {
   }
 
   // ---- roof + chimney
-  const eaveY = 6.5;
+  const eaveY = TOP;
   const halfSpan = (HZ1 - HZ0) / 2 + 0.6;
   const ridgeY = eaveY + halfSpan * 0.42;
   const slope = Math.atan2(ridgeY - eaveY, halfSpan);
@@ -468,7 +485,7 @@ export function buildWorld(scene, physics, seed) {
     B.add(siding, prismX(x, x + 0.2, [[HZ1 + WT / 2, eaveY], [HZ0 - WT / 2, eaveY], [midZ, ridgeY - 0.05]]));
   }
   const chx = rng.range(HX0 + 2, HX1 - 3);
-  solid(M.brick, chx, 7, midZ - 3.5, chx + 1, ridgeY + 1, midZ - 2.5);
+  solid(M.brick, chx, eaveY + 0.5, midZ - 3.5, chx + 1, ridgeY + 1, midZ - 2.5);
 
   // ---- porches
   const fd = plan.frontDoor.center;
@@ -483,12 +500,12 @@ export function buildWorld(scene, physics, seed) {
   // Furniture
   // =================================================================
   const nodeById = new Map(plan.nav.nodes.map((n) => [n.id, n]));
-  const navSegs = [[], []];
+  const navSegs = Array.from({ length: FLOORS }, () => []);
   for (const e of plan.nav.edges) {
     const a = nodeById.get(e.a);
     const b = nodeById.get(e.b);
     if (Math.abs(a.y - b.y) > 1) continue;
-    navSegs[a.y > 2 ? 1 : 0].push([a.x, a.z, b.x, b.z]);
+    navSegs[Math.max(0, Math.round((a.y - FLOOR) / (UPPER - FLOOR)))].push([a.x, a.z, b.x, b.z]);
   }
 
   /** Converts wall-relative coordinates (u along the wall, v out from it) to world boxes. */
@@ -1115,7 +1132,7 @@ export function buildWorld(scene, physics, seed) {
     // Ceiling lamp.
     const lx = room.type === 'stairs' ? SA + 2.7 : room.cx;
     const lz = room.type === 'stairs' ? HZ0 + 4 : room.cz;
-    const ly = room.floor === 0 ? 3.3 : 6.3;
+    const ly = floorY(room.floor + 1) - 0.2;
     deco(M.lampGlow, lx - 0.18, ly - 0.12, lz - 0.18, lx + 0.18, ly, lz + 0.18);
     lamps.push({ pos: new THREE.Vector3(lx, ly - 0.3, lz), color: 0xffe2b0, intensity: room.area >= 2 ? 9 : 6, distance: 13, decay: 1.6, flicker: false });
     if (room.type === 'stairs') continue;
@@ -1521,7 +1538,7 @@ export function buildWorld(scene, physics, seed) {
   const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x8a8272, 1.1);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
-  sun.position.set(22, 38, 14);
+  sun.position.set(44, 76, 40); // (same direction as before, just further out: the house is tall now)
   sun.target.position.set(0, 0, -12);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -1531,7 +1548,7 @@ export function buildWorld(scene, physics, seed) {
   sc.top = 30;
   sc.bottom = -30;
   sc.near = 5;
-  sc.far = 110;
+  sc.far = 180;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);

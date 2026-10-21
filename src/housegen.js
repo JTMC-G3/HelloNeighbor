@@ -17,7 +17,12 @@ import { Rng } from './rng.js';
 
 export const CELL = 4;
 export const FLOOR = 0.3;
-export const UPPER = 3.5;
+// Skyscraper fork: the ground floor plus seven floors upstairs (the original house had one).
+export const FLOORS = 8;
+export const STOREY = 3.2; // floor to floor
+/** Height of floor `f`'s floor (0 = ground). */
+export const floorY = (f) => FLOOR + STOREY * f;
+export const UPPER = floorY(1);
 export const BASEMENT = -2.9;
 export const FRONT_Z = -10;
 
@@ -56,7 +61,7 @@ export function generatePlan(seed) {
     stairX: X0 + sx * CELL,
     rooms: [],
     grid: [],
-    walls: [[], []],
+    walls: Array.from({ length: FLOORS }, () => []),
     doors: [],
     windows: [],
     extDoors: [],
@@ -72,9 +77,9 @@ export function generatePlan(seed) {
   const bx0 = plan.stairX - 4 >= X0 ? plan.stairX - 4 : plan.stairX;
   plan.basement = { x0: bx0, x1: Math.min(X1, bx0 + bw), z0: Z0 + STAIR.baseEnd, z1: Math.min(Z1, Z0 + 11.5) };
 
-  for (const floor of [0, 1]) partition(plan, floor, rng);
+  for (let floor = 0; floor < FLOORS; floor++) partition(plan, floor, rng);
   assignTypes(plan, rng);
-  for (const floor of [0, 1]) connect(plan, floor, rng);
+  for (let floor = 0; floor < FLOORS; floor++) connect(plan, floor, rng);
   exteriorDoors(plan, rng);
   windows(plan, rng);
   puzzle(plan, rng);
@@ -150,14 +155,19 @@ function assignTypes(plan, rng) {
     if (r.type) continue;
     r.type = r.area >= 2 ? big.shift() || rng.pick(GROUND_BIG) : small.shift() || rng.pick(GROUND_SMALL);
   }
-  const upper = bySize(plan.rooms.filter((r) => r.floor === 1 && r.type !== 'stairs'));
-  upper[0].type = 'master';
-  if (upper[1]) upper[1].type = upper[1].area >= 2 ? 'kids' : 'nursery';
-  big = rng.shuffle(UPPER_BIG);
-  small = rng.shuffle(UPPER_SMALL);
-  for (const r of upper) {
-    if (r.type) continue;
-    r.type = r.area >= 2 ? big.shift() || rng.pick(UPPER_BIG) : small.shift() || rng.pick(UPPER_SMALL);
+  for (let f = 1; f < FLOORS; f++) {
+    const upper = bySize(plan.rooms.filter((r) => r.floor === f && r.type !== 'stairs'));
+    // His bedroom and the kids' room are on the first floor; the rest is anyone's guess.
+    if (f === 1) {
+      upper[0].type = 'master';
+      if (upper[1]) upper[1].type = upper[1].area >= 2 ? 'kids' : 'nursery';
+    }
+    big = rng.shuffle(UPPER_BIG);
+    small = rng.shuffle(UPPER_SMALL);
+    for (const r of upper) {
+      if (r.type) continue;
+      r.type = r.area >= 2 ? big.shift() || rng.pick(UPPER_BIG) : small.shift() || rng.pick(UPPER_SMALL);
+    }
   }
 }
 
@@ -282,7 +292,7 @@ function exteriorDoors(plan, rng) {
 }
 
 function windows(plan, rng) {
-  for (const floor of [0, 1]) {
+  for (let floor = 0; floor < FLOORS; floor++) {
     for (const e of plan.walls[floor]) {
       if (!e.exterior || e.door) continue;
       const room = plan.rooms[e.lo >= 0 ? e.lo : e.hi];
@@ -291,8 +301,9 @@ function windows(plan, rng) {
       const small = room.type === 'bathroom' || room.type === 'closet' || room.type === 'pantry';
       const w = small ? 0.8 : rng.range(1.2, 1.8);
       const center = rng.range(e.a + w / 2 + 0.6, e.b - w / 2 - 0.6);
-      const bottom = floor === 0 ? (small ? 1.6 : 0.9) : small ? 4.9 : 4.3;
-      const top = floor === 0 ? 2.6 : 5.7;
+      const y = floorY(floor);
+      const bottom = floor === 0 ? (small ? 1.6 : 0.9) : y + (small ? 1.4 : 0.8);
+      const top = floor === 0 ? 2.6 : y + 2.2;
       const win = { a: center - w / 2, b: center + w / 2, bottom, top, room: room.id, edge: e };
       e.windows.push(win);
       room.windows.push(win);
@@ -317,8 +328,8 @@ function puzzle(plan, rng) {
   };
   const interior = plan.doors.filter((d) => !d.kind);
   for (const d of interior) link(d.lo, d.hi, d);
-  const stairs = plan.rooms.filter((r) => r.type === 'stairs');
-  link(stairs[0].id, stairs[1].id, null);
+  const stairs = plan.rooms.filter((r) => r.type === 'stairs').sort((p, q) => p.floor - q.floor);
+  for (let f = 1; f < stairs.length; f++) link(stairs[f - 1].id, stairs[f].id, null);
   link('out', plan.backDoor.room, null);
 
   const reach = (locked) => {
@@ -396,7 +407,7 @@ function navigation(plan) {
     return id;
   };
   const edge = (a, b, door = null) => edges.push({ a, b, door });
-  const Y = (f) => (f === 0 ? FLOOR : UPPER);
+  const Y = floorY;
   const { stairX: a, Z0, Z1 } = plan;
   const roomNode = (r) => `r${r.id}`;
 
@@ -420,20 +431,23 @@ function navigation(plan) {
     edge(`d${d.id}b`, roomNode(plan.rooms[d.hi]));
   }
 
-  // Stairwell.
-  const sg = plan.rooms.find((r) => r.floor === 0 && r.type === 'stairs');
-  const su = plan.rooms.find((r) => r.floor === 1 && r.type === 'stairs');
-  node('stairFoot', a + 2.7, FLOOR, Z0 + 7.45);
-  node('stairBot', a + 0.65, FLOOR, Z0 + 7.45);
-  node('stairTop', a + 0.65, UPPER, Z0 + 0.7);
-  node('upLanding', a + 2.7, UPPER, Z0 + 0.7);
+  // Stairwell: one flight per floor, stacked; each starts at the south end and arrives at the north end.
+  const stairRooms = plan.rooms.filter((r) => r.type === 'stairs').sort((p, q) => p.floor - q.floor);
+  const sg = stairRooms[0];
+  for (let f = 0; f + 1 < stairRooms.length; f++) {
+    const n = (name) => (f === 0 ? name : `${name}${f}`);
+    node(n('stairFoot'), a + 2.7, Y(f), Z0 + 7.45);
+    node(n('stairBot'), a + 0.65, Y(f), Z0 + 7.45);
+    node(n('stairTop'), a + 0.65, Y(f + 1), Z0 + 0.7);
+    node(n('upLanding'), a + 2.7, Y(f + 1), Z0 + 0.7);
+    edge(roomNode(stairRooms[f]), n('stairFoot'));
+    edge(n('stairFoot'), n('stairBot'));
+    edge(n('stairBot'), n('stairTop'));
+    edge(n('stairTop'), n('upLanding'));
+    edge(n('upLanding'), roomNode(stairRooms[f + 1]));
+  }
   node('landing', a + 2.7, FLOOR, Z0 + 0.65);
   node('baseGuard', a + 0.65, FLOOR, Z0 + 0.65);
-  edge(roomNode(sg), 'stairFoot');
-  edge('stairFoot', 'stairBot');
-  edge('stairBot', 'stairTop');
-  edge('stairTop', 'upLanding');
-  edge('upLanding', roomNode(su));
   edge(roomNode(sg), 'landing');
   edge('landing', 'baseGuard');
 
@@ -481,7 +495,8 @@ function navigation(plan) {
   edge('backOut', 'yN');
 
   const patrol = [['baseGuard', 4]];
-  for (const r of plan.rooms) patrol.push([roomNode(r), r.type === 'stairs' ? 1 : r.area >= 2 ? 3 : 2]);
+  // (He mostly keeps to the bottom two floors; the rest of the tower gets the odd look.)
+  for (const r of plan.rooms) patrol.push([roomNode(r), r.floor >= 2 ? 0.25 : r.type === 'stairs' ? 1 : r.area >= 2 ? 3 : 2]);
   patrol.push(['frontOut', 1], ['yNW', 1], ['ySE', 1], ['backOut', 1]);
 
   plan.nav = { nodes, edges, patrol, home: roomNode(sg), guard: 'baseGuard' };

@@ -9,6 +9,13 @@ house, dodge him as he patrols, and find out what he's hiding, without getting c
 **Every visit is a different house.** The layout, rooms, furniture, locked doors and where
 things are hidden are all generated fresh each time you play.
 
+> **Skyscraper branch (`claude/skyscraper`), just for fun:** the neighbor's house has
+> **eight floors** (the ground floor plus seven upstairs) instead of two. Every floor gets its own
+> rooms, doors and windows; the stairs stack up the stairwell (come up at the north end, walk
+> round to the south end, take the next flight), and the keys can be hidden on any floor.
+> Change `FLOORS` in `src/housegen.js` for a different height. Being 4x the house, it's heavier
+> to draw (about 2.6x the draw calls from the street), so it may run slower on Chromebooks.
+
 > **Disclaimer:** this is an unofficial, non-commercial fan tribute. It is not affiliated
 > with or endorsed by tinyBuild or Dynamic Pixels. It contains no assets from the original
 > game. Every model, texture, and sound is generated procedurally in the browser.
