@@ -685,7 +685,7 @@ export class Neighbor {
             // Stares at you from across the street.
             this.turnTo(Math.atan2(player.pos.x - this.ch.pos.x, player.pos.z - this.ch.pos.z), dt, 3);
           } else {
-            this.heading += Math.sin(performance.now() * 0.0012) * dt * 0.8;
+            this.heading += Math.sin(game.time * 1.2) * dt * 0.8;
           }
           if (this.wait <= 0) this.startPatrol();
         } else {

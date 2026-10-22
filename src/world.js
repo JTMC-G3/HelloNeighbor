@@ -13,6 +13,8 @@ import { Rng } from './rng.js';
  */
 
 export { FLOOR, UPPER, BASEMENT };
+// Lamp flicker is only visual: it keeps its own random stream (see tas.js).
+const rnd = Math.random.bind(Math);
 export const SPAWN = new THREE.Vector3(0, 0, 9.5);
 
 // Heading (rotation about Y, 0 = facing +z) pointing out of a wall into the room.
@@ -1619,8 +1621,8 @@ export function buildWorld(scene, physics, seed) {
     }
     flickerTimer -= dt;
     if (flickerTimer <= 0) {
-      flickerValue = Math.random() < 0.15 ? 0.6 : 8 + Math.random() * 4;
-      flickerTimer = 0.05 + Math.random() * 0.12;
+      flickerValue = rnd() < 0.15 ? 0.6 : 8 + rnd() * 4;
+      flickerTimer = 0.05 + rnd() * 0.12;
     }
     if (cam) updateLights(dt, cam);
     const glow = 0.35 + 0.3 * Math.sin(performance.now() * 0.004);

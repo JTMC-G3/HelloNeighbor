@@ -2,6 +2,8 @@ import * as THREE from 'three';
 
 // Every sound in the game is synthesized with the Web Audio API.
 
+// Sound never draws from the game's (TAS-seeded) random stream: it must not change what happens.
+const rnd = Math.random.bind(Math);
 const tmp = new THREE.Vector3();
 
 export class Sound {
@@ -37,7 +39,7 @@ export class Sound {
     const len = ctx.sampleRate * 2;
     this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < len; i++) d[i] = rnd() * 2 - 1;
 
     this.musicTimer = setInterval(() => this.tickMusic(), 140);
   }
@@ -90,7 +92,7 @@ export class Sound {
     env.gain.linearRampToValueAtTime(gain, now + attack);
     env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
     src.connect(f).connect(env).connect(dest);
-    src.start(now, Math.random() * 1.5);
+    src.start(now, rnd() * 1.5);
     src.stop(now + dur + 0.05);
   }
 
@@ -148,7 +150,7 @@ export class Sound {
     this.noise(node, { dur: 0.5, type: 'highpass', freq: 2500, gain: 1 });
     this.noise(node, { dur: 0.25, type: 'bandpass', freq: 5000, q: 2, gain: 0.8 });
     for (let i = 0; i < 12; i++) {
-      this.tone(node, { t: Math.random() * 0.6, freq: 2500 + Math.random() * 4500, dur: 0.08 + Math.random() * 0.1, gain: 0.15 });
+      this.tone(node, { t: rnd() * 0.6, freq: 2500 + rnd() * 4500, dur: 0.08 + rnd() * 0.1, gain: 0.15 });
     }
   }
 
@@ -164,7 +166,7 @@ export class Sound {
     if (!this.ok()) return;
     const { node } = this.out(pos, 0.7, 30);
     if (opening) {
-      this.tone(node, { type: 'sawtooth', freq: 190 + Math.random() * 40, freqEnd: 260 + Math.random() * 80, dur: 0.45, gain: 0.08, attack: 0.08 });
+      this.tone(node, { type: 'sawtooth', freq: 190 + rnd() * 40, freqEnd: 260 + rnd() * 80, dur: 0.45, gain: 0.08, attack: 0.08 });
       this.noise(node, { dur: 0.04, type: 'highpass', freq: 2500, gain: 0.6 });
     } else {
       this.noise(node, { dur: 0.15, type: 'lowpass', freq: 600, gain: 1 });
@@ -241,10 +243,10 @@ export class Sound {
     if (gain < 0.001) return;
     if (kind === 'tv') {
       this.noise(node, { dur: 1.3, type: 'bandpass', freq: 1800, q: 0.7, gain: 0.35, attack: 0.05 });
-      for (let i = 0; i < 4; i++) this.tone(node, { t: i * 0.3, type: 'square', freq: 180 + Math.random() * 220, dur: 0.18, gain: 0.08 });
+      for (let i = 0; i < 4; i++) this.tone(node, { t: i * 0.3, type: 'square', freq: 180 + rnd() * 220, dur: 0.18, gain: 0.08 });
     } else {
       const scale = [261.6, 293.7, 329.6, 392, 440, 523.3];
-      for (let i = 0; i < 6; i++) this.tone(node, { t: i * 0.22, type: 'triangle', freq: scale[(Math.random() * scale.length) | 0], dur: 0.2, gain: 0.18 });
+      for (let i = 0; i < 6; i++) this.tone(node, { t: i * 0.22, type: 'triangle', freq: scale[(rnd() * scale.length) | 0], dur: 0.2, gain: 0.18 });
       this.tone(node, { type: 'sine', freq: 130.8, dur: 1.3, gain: 0.12 });
     }
   }
@@ -260,7 +262,7 @@ export class Sound {
         break;
       case 'splash':
         this.noise(node, { dur: 0.35, type: 'bandpass', freq: 1200, freqEnd: 600, q: 1, gain: 0.5 });
-        this.tone(node, { t: 0.1, freq: 900 + Math.random() * 400, freqEnd: 500, dur: 0.1, gain: 0.08 });
+        this.tone(node, { t: 0.1, freq: 900 + rnd() * 400, freqEnd: 500, dur: 0.1, gain: 0.08 });
         break;
       case 'sizzle':
         this.noise(node, { dur: 1.1, type: 'highpass', freq: 4000, gain: 0.25, attack: 0.1 });
@@ -271,13 +273,13 @@ export class Sound {
         break;
       case 'piano': {
         const notes = [261.6, 293.7, 311.1, 349.2, 392, 415.3, 466.2, 523.3];
-        const f = notes[(Math.random() * notes.length) | 0];
+        const f = notes[(rnd() * notes.length) | 0];
         this.tone(node, { type: 'triangle', freq: f, dur: 0.6, gain: 0.25 });
         this.tone(node, { type: 'sine', freq: f * 2, dur: 0.4, gain: 0.08 });
         break;
       }
       case 'clang':
-        this.tone(node, { freq: 1900 + Math.random() * 300, dur: 0.25, gain: 0.25 });
+        this.tone(node, { freq: 1900 + rnd() * 300, dur: 0.25, gain: 0.25 });
         this.noise(node, { dur: 0.05, type: 'highpass', freq: 3000, gain: 0.8 });
         break;
       case 'rumble':
@@ -287,7 +289,7 @@ export class Sound {
         this.noise(node, { dur: 0.3, type: 'bandpass', freq: 3000, freqEnd: 1500, q: 0.8, gain: 0.3, attack: 0.08 });
         break;
       case 'engine':
-        this.tone(node, { type: 'sawtooth', freq: 58 + Math.random() * 4, dur: 0.5, gain: 0.14, attack: 0.02 });
+        this.tone(node, { type: 'sawtooth', freq: 58 + rnd() * 4, dur: 0.5, gain: 0.14, attack: 0.02 });
         this.noise(node, { dur: 0.5, type: 'lowpass', freq: 600, gain: 0.5 });
         break;
       case 'paper':
@@ -328,9 +330,9 @@ export class Sound {
 
   chirp() {
     if (!this.ok()) return;
-    const { node } = this.out(null, 0.05 + Math.random() * 0.05);
-    const base = 2600 + Math.random() * 1500;
-    const n = 2 + ((Math.random() * 3) | 0);
+    const { node } = this.out(null, 0.05 + rnd() * 0.05);
+    const base = 2600 + rnd() * 1500;
+    const n = 2 + ((rnd() * 3) | 0);
     for (let i = 0; i < n; i++) {
       this.tone(node, { t: i * 0.12, freq: base, freqEnd: base * 1.35, dur: 0.08, gain: 0.5 });
     }
@@ -341,7 +343,7 @@ export class Sound {
     this.birdTimer -= dt;
     if (this.birdTimer <= 0) {
       if (outside) this.chirp();
-      this.birdTimer = 2.5 + Math.random() * 6;
+      this.birdTimer = 2.5 + rnd() * 6;
     }
   }
 

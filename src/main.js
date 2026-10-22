@@ -11,6 +11,7 @@ import { randomSeed, seedFromText, seedFromUrl } from './rng.js';
 import { Debug } from './debug.js';
 import { Multiplayer } from './mp.js';
 import { VR } from './vr.js';
+import { TAS } from './tas.js';
 
 const REACH = 2.5;
 // Things that block reaching for an item: walls, glass, closed cupboards (not doors, handled separately).
@@ -27,6 +28,8 @@ const JANK = {
   superBounce: 0.15, // chance a thrown box comes off the floor extra bouncy
   kick: 4.5, // the neighbor punts boxes out of his way
 };
+// Purely visual randomness (glass shards, camera shake) stays off the TAS-seeded stream.
+const vrnd = Math.random.bind(Math);
 const V3 = (a) => new THREE.Vector3(Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0);
 
 class Game {
@@ -113,10 +116,11 @@ class Game {
     this.bindInput();
     this.bindSettings();
     this.mp = new Multiplayer(this);
+    this.tas = new TAS(this);
     window.addEventListener('resize', () => this.onResize());
 
     this.lastTime = performance.now();
-    this.renderer.setAnimationLoop(() => this.frame());
+    this.renderer.setAnimationLoop(() => (this.tas.driving ? this.tas.drive() : this.frame()));
 
     // Handy for debugging from the console.
     window.game = this;
@@ -182,6 +186,7 @@ class Game {
       this.toast("Restarting from inside VR isn't supported yet: take the headset off first.", 2500);
       return;
     }
+    if (this.tas.driving && !this.tas.starting) this.tas.stop(true);
     const p = this.player;
     const debugWasOn = !!this.debug;
     if (this.debug) this.toggleDebug(false);
@@ -414,7 +419,7 @@ class Game {
         this.fixMouse();
         return;
       }
-      if (this.state !== 'playing' || this.menuOpen) return;
+      if (this.state !== 'playing' || this.menuOpen || this.tas.blocking) return;
       p.keys.add(e.code);
       if (e.repeat) return;
       if (e.code === 'Backquote') {
@@ -441,7 +446,7 @@ class Game {
       p.look(dx, dy);
     };
     document.addEventListener('mousemove', (e) => {
-      if (this.state !== 'playing' || this.menuOpen) return;
+      if (this.state !== 'playing' || this.menuOpen || this.tas.blocking) return;
       if (document.pointerLockElement === this.canvas) {
         // Browsers sometimes report a huge bogus delta right after locking.
         if (performance.now() - this.lockedAt < 120) return;
@@ -455,7 +460,7 @@ class Game {
       }
     });
     this.canvas.addEventListener('mousedown', (e) => {
-      if (this.state !== 'playing' || this.menuOpen) return;
+      if (this.state !== 'playing' || this.menuOpen || this.tas.blocking) return;
       if (document.pointerLockElement === this.canvas) {
         if (e.button === 0) this.primary();
         if (e.button === 2) this.drop();
@@ -1484,17 +1489,17 @@ class Game {
     if (!this.online || this.mp.isHost) this.emitNoise(win.center, 30, null, owner);
     for (let i = 0; i < 22; i++) {
       const m = new THREE.Mesh(this.shardGeo, this.shardMat);
-      const along = (Math.random() - 0.5) * win.w;
-      const up = (Math.random() - 0.5) * win.h;
+      const along = (vrnd() - 0.5) * win.w;
+      const up = (vrnd() - 0.5) * win.h;
       if (win.axis === 'x') m.position.set(win.center.x + along, win.center.y + up, win.center.z);
       else m.position.set(win.center.x, win.center.y + up, win.center.z + along);
-      m.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
-      const vel = dir.clone().normalize().multiplyScalar(1 + Math.random() * 3);
-      vel.x += (Math.random() - 0.5) * 2;
-      vel.z += (Math.random() - 0.5) * 2;
-      vel.y += Math.random() * 1.5;
+      m.rotation.set(vrnd() * 6, vrnd() * 6, vrnd() * 6);
+      const vel = dir.clone().normalize().multiplyScalar(1 + vrnd() * 3);
+      vel.x += (vrnd() - 0.5) * 2;
+      vel.z += (vrnd() - 0.5) * 2;
+      vel.y += vrnd() * 1.5;
       this.scene.add(m);
-      this.shards.push({ m, vel, spin: new THREE.Vector3(Math.random() * 10, Math.random() * 10, 0), resting: false });
+      this.shards.push({ m, vel, spin: new THREE.Vector3(vrnd() * 10, vrnd() * 10, 0), resting: false });
     }
   }
 
@@ -1756,7 +1761,7 @@ class Game {
       $('hideOverlay').classList.add('hidden');
     }
     this.pullFrom = p.ch.pos.clone();
-    this.shakeSeed = Math.random() * 100;
+    this.shakeSeed = vrnd() * 100;
     // Keys and the crowbar go back where they came from.
     const held = this.player.held;
     if (held) {
@@ -1990,9 +1995,9 @@ class Game {
   }
 
   // ================================================================ loop
-  frame(hidden = false) {
+  frame(hidden = false, fixedDt = 0, skipRender = false) {
     const now = performance.now();
-    const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+    const dt = fixedDt || Math.min(0.05, (now - this.lastTime) / 1000);
     this.lastTime = now;
     this.time += dt;
     const p = this.player;
@@ -2119,6 +2124,7 @@ class Game {
     }
     // The sun never moves, so shadows only need refreshing for moving things
     // (the neighbor, doors, items) and not necessarily every frame.
+    if (skipRender) return; // (TAS fast-forward: only the last tick of a frame gets drawn)
     this.frameCount++;
     const every = this.preset.shadowEvery;
     if (every > 0 && this.frameCount % every === 0) this.renderer.shadowMap.needsUpdate = true;
