@@ -10,7 +10,11 @@
  * Y: open / close TAS mode   [ ]: slower / faster   U: record / stop   I: play back
  * \ : freeze   . : advance one tick while frozen   (Save / Load buttons in the panel)
  */
+import * as THREE from 'three';
+
 export const TICK = 1 / 60;
+const VIEW_W = 260; // the rear view, top right (CSS pixels)
+const VIEW_H = 160;
 const SPEEDS = [0.05, 0.1, 0.25, 0.5, 1];
 const KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyC', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const EVENTS = ['interact', 'drop', 'primary', 'toggleFlashlight'];
@@ -52,6 +56,9 @@ export class TAS {
       };
     }
 
+    // Rear view: a second camera at the player's head looking straight back (his body, not the mouse).
+    this.rear = new THREE.PerspectiveCamera(80, VIEW_W / VIEW_H, 0.05, 400);
+    this.rear.rotation.order = 'YXZ';
     this.buildPanel();
     document.addEventListener('keydown', (e) => this.onKey(e), true);
   }
@@ -70,9 +77,16 @@ export class TAS {
     const el = document.createElement('div');
     el.id = 'tasPanel';
     el.className = 'hidden';
-    el.style.cssText = 'position:fixed;top:12px;right:12px;z-index:30;min-width:260px;padding:10px 12px;border-radius:8px;background:rgba(10,10,16,0.82);color:#e8e8f0;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;pointer-events:auto;';
+    el.style.cssText = `position:fixed;top:${VIEW_H + 24}px;right:12px;z-index:30;min-width:260px;padding:10px 12px;border-radius:8px;background:rgba(10,10,16,0.82);color:#e8e8f0;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;pointer-events:auto;`;
     el.innerHTML = '<div id="tasInfo"></div><div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button id="tasSave">Save</button><button id="tasLoad">Load</button><input id="tasFile" type="file" accept=".json,application/json" style="display:none" /></div>';
     document.body.appendChild(el);
+    // A frame and label drawn over the rear view.
+    const frame = document.createElement('div');
+    frame.className = 'hidden';
+    frame.style.cssText = `position:fixed;top:12px;right:12px;width:${VIEW_W}px;height:${VIEW_H}px;box-sizing:border-box;border:2px solid #8ab4ff;border-radius:4px;z-index:29;pointer-events:none;color:#8ab4ff;font:11px ui-monospace,Menlo,Consolas,monospace;`;
+    frame.innerHTML = '<span style="position:absolute;left:5px;top:3px;text-shadow:0 0 3px #000">BEHIND YOU</span>';
+    document.body.appendChild(frame);
+    this.frame = frame;
     this.panel = el;
     this.info = el.querySelector('#tasInfo');
     for (const b of el.querySelectorAll('button')) b.style.cssText = 'padding:3px 10px;border-radius:5px;border:1px solid #556;background:#223;color:#e8e8f0;cursor:pointer;font:inherit';
@@ -122,6 +136,7 @@ export class TAS {
     this.on = on;
     if (!on) this.stop(true);
     this.panel.classList.toggle('hidden', !on);
+    this.frame.classList.toggle('hidden', !on);
     this.game.toast(on ? 'TAS mode ON: U record (slow-mo), I play back, [ ] speed, Y to leave' : 'TAS mode OFF', 2600);
     this.refresh();
   }
@@ -234,6 +249,7 @@ export class TAS {
       // Between ticks: keep the view smooth (mouse look in slow motion) and draw.
       if (this.mode === 'recording') g.player.syncCamera(0);
       g.renderer.render(g.scene, g.camera);
+      this.renderRear();
     }
     if (now - (this.lastInfo || 0) > 100) {
       this.lastInfo = now;
@@ -264,6 +280,28 @@ export class TAS {
       p.yaw = yaw;
       p.pitch = pitch;
     }
+  }
+
+  /** Draws the rear view into the top-right corner (after the main picture). */
+  renderRear() {
+    const g = this.game;
+    if (!this.on || g.vr.active || g.state === 'menu') return;
+    const r = g.renderer;
+    const p = g.player;
+    const w = r.domElement.clientWidth;
+    const h = r.domElement.clientHeight;
+    this.rear.position.copy(g.camera.position);
+    this.rear.rotation.set(0, p.yaw + Math.PI, 0);
+    this.rear.far = g.camera.far;
+    this.rear.updateProjectionMatrix();
+    const x = w - VIEW_W - 12;
+    const y = h - VIEW_H - 12; // (viewport y counts up from the bottom)
+    r.setScissorTest(true);
+    r.setViewport(x, y, VIEW_W, VIEW_H);
+    r.setScissor(x, y, VIEW_W, VIEW_H);
+    r.render(g.scene, this.rear);
+    r.setScissorTest(false);
+    r.setViewport(0, 0, w, h);
   }
 
   // ------------------------------------------------------------ save / load

@@ -2129,6 +2129,7 @@ class Game {
     const every = this.preset.shadowEvery;
     if (every > 0 && this.frameCount % every === 0) this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
+    this.tas.renderRear();
     this.updatePerformance(dt);
   }
 }
