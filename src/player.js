@@ -8,6 +8,7 @@ const STAND_EYE = 1.6;
 const AIR_CAP = 0.6;
 const AIR_ACCEL = 10;
 const MAX_HOP_SPEED = 30;
+const BACKHOP_BOOST = 1.14; // speed multiplier per crouched hop while facing against your momentum
 const CROUCH_EYE = 0.95;
 
 export class Player {
@@ -137,10 +138,21 @@ export class Player {
     // landing frame, so speed is kept), and in the air you accelerate along wherever you steer
     // with a low speed cap per tick, so strafing (A/D while turning the mouse the same way) builds speed.
     const source = !vi;
-    if (wantJump && this.ch.onGround && !this.crouching) {
+    if (wantJump && this.ch.onGround && (!this.crouching || source)) {
       if (vi) vi.jump = false;
       this.ch.vel.y = 5.0;
       this.ch.onGround = false;
+      // Accelerated back-hopping: crouched, facing away from where you're heading, every
+      // hop adds a big chunk of speed (turn round mid-air, crouch, and keep jumping).
+      const hs = Math.hypot(this.ch.vel.x, this.ch.vel.z);
+      if (source && this.crouching && hs > 1.5) {
+        const facing = (-sin * this.ch.vel.x - cos * this.ch.vel.z) / hs;
+        if (facing < -0.35) {
+          const boost = Math.min(MAX_HOP_SPEED, hs * BACKHOP_BOOST + 0.4) / hs;
+          this.ch.vel.x *= boost;
+          this.ch.vel.z *= boost;
+        }
+      }
       // Hopping fast is loud: he hears every landing-and-leaving thump.
       if (source && Math.hypot(this.ch.vel.x, this.ch.vel.z) > b.sprint * 1.15) emitNoise(this.ch.pos, 5);
     }

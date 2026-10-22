@@ -80,7 +80,7 @@ server (see below).
 | **Mouse** (or arrow keys) | Look |
 | **Shift** | Sprint (fast, but makes a little noise) |
 | **C** / **Ctrl** | Crouch (harder to spot) |
-| **Space** | Jump (onto counters, through windows). **Hold it to bunny-hop**: Source-engine style, so landing and jumping again keeps your speed, and in the air A/D plus turning the mouse the same way builds speed (strafe-jumping). Hopping fast makes noise. Desktop only |
+| **Space** | Jump (onto counters, through windows). **Hold it to bunny-hop**: Source-engine style, so landing and jumping again keeps your speed, and in the air A/D plus turning the mouse the same way builds speed (strafe-jumping). Hopping fast makes noise. **Back-hopping**: run, turn right round (so you face away from where you're moving), hold **C** to crouch and keep jumping, and every hop adds a big chunk of speed (6 to 25+ m/s in a few seconds; crouch-jumping the normal way adds none). Desktop only |
 | **E** | Pick up / swap items, open doors and cupboards, use keys, hide, switch things on/off |
 | **Left click** | Throw held item |
 | **Q** / **Right click** | Drop held item |
