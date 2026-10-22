@@ -3,6 +3,11 @@ import * as THREE from 'three';
 const STAND_H = 1.7;
 const CROUCH_H = 1.05;
 const STAND_EYE = 1.6;
+// Source-style air strafing (see Player.update): the per-tick speed cap along your steering,
+// how hard you accelerate towards it, and a safety limit on bunny-hop speed (m/s).
+const AIR_CAP = 0.6;
+const AIR_ACCEL = 10;
+const MAX_HOP_SPEED = 30;
 const CROUCH_EYE = 0.95;
 
 export class Player {
@@ -127,15 +132,40 @@ export class Player {
     }
     this.sprinting = (vi ? vi.sprint && wl > 0.3 : (k.has('ShiftLeft') || k.has('ShiftRight')) && f > 0) && !this.crouching;
     const speed = this.crouching ? 1.9 : this.sprinting ? b.sprint : b.walk;
-    const accel = this.ch.onGround ? 14 : 3;
-    const blend = Math.min(1, accel * dt);
-    this.ch.vel.x += (wx * speed - this.ch.vel.x) * blend;
-    this.ch.vel.z += (wz * speed - this.ch.vel.z) * blend;
-
-    if ((vi ? vi.jump : k.has('Space')) && this.ch.onGround && !this.crouching) {
+    const wantJump = vi ? vi.jump : k.has('Space');
+    // Source-engine style movement on desktop: hold jump and you bunny-hop (no friction on the
+    // landing frame, so speed is kept), and in the air you accelerate along wherever you steer
+    // with a low speed cap per tick, so strafing (A/D while turning the mouse the same way) builds speed.
+    const source = !vi;
+    if (wantJump && this.ch.onGround && !this.crouching) {
       if (vi) vi.jump = false;
       this.ch.vel.y = 5.0;
       this.ch.onGround = false;
+      // Hopping fast is loud: he hears every landing-and-leaving thump.
+      if (source && Math.hypot(this.ch.vel.x, this.ch.vel.z) > b.sprint * 1.15) emitNoise(this.ch.pos, 5);
+    }
+    if (source && !this.ch.onGround) {
+      if (wl > 0.01) {
+        const wishSpeed = speed * Math.min(1, wl);
+        const dx = wx / wl;
+        const dz = wz / wl;
+        const add = AIR_CAP - (this.ch.vel.x * dx + this.ch.vel.z * dz);
+        if (add > 0) {
+          const gain = Math.min(add, AIR_ACCEL * wishSpeed * dt);
+          this.ch.vel.x += dx * gain;
+          this.ch.vel.z += dz * gain;
+        }
+      }
+      const h = Math.hypot(this.ch.vel.x, this.ch.vel.z);
+      if (h > MAX_HOP_SPEED) {
+        this.ch.vel.x *= MAX_HOP_SPEED / h;
+        this.ch.vel.z *= MAX_HOP_SPEED / h;
+      }
+    } else {
+      const accel = this.ch.onGround ? 14 : 3;
+      const blend = Math.min(1, accel * dt);
+      this.ch.vel.x += (wx * speed - this.ch.vel.x) * blend;
+      this.ch.vel.z += (wz * speed - this.ch.vel.z) * blend;
     }
 
     this.physics.moveCharacter(this.ch, dt);
