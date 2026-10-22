@@ -85,12 +85,56 @@ class Game {
 
     // ---- systems
     this.sound = new Sound();
+    this.baseChildren = new Set(scene.children); // (what isn't the house: for restartWorld)
+    this.buildHouse();
+    for (const el of document.querySelectorAll('.seedLabel')) el.textContent = `House #${this.seed}`;
+    this.player.spawn(SPAWN, 0);
+    this.vr = new VR(this);
+    VR.supported().then((ok) => {
+      this.vrOk = ok;
+      for (const b of document.querySelectorAll('.vrBtn')) b.classList.toggle('hidden', !ok);
+    });
+
+    this.raycaster = new THREE.Raycaster();
+    this.target = null;
+    this.shards = [];
+    this.shardGeo = new THREE.BufferGeometry();
+    this.shardGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.07, 0.02, 0, 0.02, 0.09, 0], 3));
+    this.shardGeo.computeVertexNormals();
+    this.shardMat = new THREE.MeshLambertMaterial({ color: 0xd8f0ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
+
+    const bad = this.nav.validate();
+    if (bad.length) console.warn('[nav] blocked edges:', bad);
+
+    this.frameCount = 0;
+    this.perf = { acc: 0, frames: 0, calm: 0, cooldown: 0, fpsAcc: 0, fpsFrames: 0 };
+    this.applyQuality(this.quality);
+
+    this.bindInput();
+    this.bindSettings();
+    this.mp = new Multiplayer(this);
+    window.addEventListener('resize', () => this.onResize());
+
+    this.lastTime = performance.now();
+    this.renderer.setAnimationLoop(() => this.frame());
+
+    // Handy for debugging from the console.
+    window.game = this;
+  }
+
+  /** Builds the house, its physics and the neighbors (again, for restartWorld). */
+  buildHouse() {
+    const scene = this.scene;
     this.physics = new Physics();
     this.world = buildWorld(scene, this.physics, this.seed);
     this.nav = new Nav(this.physics, this.world.navData);
-    this.player = new Player(this.camera, this.physics, this.sound);
-    this.player.id = 0;
-    this.player.role = 'kid';
+    if (this.player) {
+      this.player.physics = this.physics;
+    } else {
+      this.player = new Player(this.camera, this.physics, this.sound);
+      this.player.id = 0;
+      this.player.role = 'kid';
+    }
     this.neighbor = new Neighbor(scene, this.world.textures, this.physics, this.nav, this.sound);
     // Sounds of things happening in the world (everyone hears these in multiplayer).
     this.sfx = this.sound;
@@ -120,41 +164,75 @@ class Game {
       st.via = this.nav.approachTo(st.stand);
       return !!st.via;
     }));
-    for (const el of document.querySelectorAll('.seedLabel')) el.textContent = `House #${this.seed}`;
-    this.player.spawn(SPAWN, 0);
-    this.vr = new VR(this);
-    VR.supported().then((ok) => {
-      this.vrOk = ok;
-      for (const b of document.querySelectorAll('.vrBtn')) b.classList.toggle('hidden', !ok);
-    });
-
-    this.raycaster = new THREE.Raycaster();
     // Only door panels are raycast as meshes; walls/glass use the (much cheaper) collision boxes.
     this.rayTargets = this.world.dynamicMeshes;
-    this.target = null;
+  }
+
+  /**
+   * R: start the whole world over without reloading the page. The house is rebuilt from the same
+   * seed (locks back on, keys back where they were, windows unbroken, boxes where they began),
+   * the neighbors are reset, and you wake up at home.
+   */
+  restartWorld() {
+    if (this.online) {
+      this.toast("Restarting isn't available in multiplayer.", 2000);
+      return;
+    }
+    if (this.vr.active) {
+      this.toast("Restarting from inside VR isn't supported yet: take the headset off first.", 2500);
+      return;
+    }
+    const p = this.player;
+    const debugWasOn = !!this.debug;
+    if (this.debug) this.toggleDebug(false);
+    if (this.debugTools) {
+      this.debugTools.group.parent && this.debugTools.group.parent.remove(this.debugTools.group);
+      this.debugTools = null;
+    }
+    // Drop what you're holding, and throw the old house away.
+    if (p.held) this.camera.remove(p.held.mesh);
+    p.held = null;
+    p.hidden = null;
+    for (const child of [...this.scene.children]) {
+      if (this.baseChildren.has(child)) continue;
+      this.scene.remove(child);
+      child.traverse((o) => {
+        if (o.geometry && o.geometry !== this.shardGeo) o.geometry.dispose();
+        const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        for (const m of mats) if (m !== this.shardMat) m.dispose();
+      });
+    }
+    for (const t of this.world.textureList) t.dispose();
+    this.world.setLightSlots(0);
     this.shards = [];
-    this.shardGeo = new THREE.BufferGeometry();
-    this.shardGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.07, 0.02, 0, 0.02, 0.09, 0], 3));
-    this.shardGeo.computeVertexNormals();
-    this.shardMat = new THREE.MeshLambertMaterial({ color: 0xd8f0ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
-
-    const bad = this.nav.validate();
-    if (bad.length) console.warn('[nav] blocked edges:', bad);
-
-    this.frameCount = 0;
-    this.perf = { acc: 0, frames: 0, calm: 0, cooldown: 0, fpsAcc: 0, fpsFrames: 0 };
+    this.noises.length = 0;
+    this.buildHouse();
     this.applyQuality(this.quality);
 
-    this.bindInput();
-    this.bindSettings();
-    this.mp = new Multiplayer(this);
-    window.addEventListener('resize', () => this.onResize());
-
-    this.lastTime = performance.now();
-    this.renderer.setAnimationLoop(() => this.frame());
-
-    // Handy for debugging from the console.
-    window.game = this;
+    // Everything back to the start.
+    this.state = 'playing';
+    this.playTime = 0;
+    this.catches = 0;
+    this.stunned = 0;
+    this.hideAnim = null;
+    this.pulledFrom = null;
+    this.catcher = null;
+    this.endInfo = null;
+    this.target = null;
+    this.menuOpen = false;
+    this.hudKey = null;
+    p.keys.clear();
+    p.spawn(SPAWN, 0);
+    this.sound.setChase(false);
+    $('held').innerHTML = '';
+    $('prompt').innerHTML = '';
+    for (const id of ['pause', 'end', 'caughtText', 'hideOverlay']) $(id).classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    $('fade').style.opacity = '0';
+    this.fadeOut = 1;
+    if (debugWasOn) this.toggleDebug(true);
+    this.lockPointer();
+    this.toast('World restarted. Back home.', 2200);
   }
 
   addSky() {
@@ -327,6 +405,11 @@ class Game {
 
     document.addEventListener('keydown', (e) => {
       // M: grab the mouse again (browsers sometimes refuse, e.g. right after Esc).
+      // R: restart the whole world, no refresh (single player).
+      if (e.code === 'KeyR' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && this.state !== 'menu') {
+        this.restartWorld();
+        return;
+      }
       if (e.code === 'KeyM' && !e.repeat && (this.state === 'playing' || this.state === 'paused')) {
         this.fixMouse();
         return;

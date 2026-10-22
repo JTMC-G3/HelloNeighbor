@@ -86,6 +86,7 @@ server (see below).
 | **Q** / **Right click** | Drop held item |
 | **F** | Flashlight |
 | **Ctrl+W** | Won't close the game by accident: the browser asks "Leave site?" first, and in **Fullscreen** (tick it on the title screen or pause menu; Chrome/Edge) it does nothing at all |
+| **R** | Restart the world right away, no page reload: same house, everything back as it began (locks, keys, windows, boxes, the neighbor) and you're back home. Single player |
 | **M** | Capture the mouse again, if the browser refused (it often does right after Esc) |
 | **Esc** / **P** | Pause (sensitivity, volume, restart; your settings are remembered). In multiplayer it opens the menu without pausing |
 | **`** | Debug mode on / off (see below) |
