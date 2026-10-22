@@ -3,11 +3,11 @@
  *
  * The game is stepped in fixed 1/60 s ticks while a TAS is being recorded or played, so a run
  * is just the keys held, where you were looking and the one-off actions (E, throw, drop, torch)
- * on each tick. Recording slows the clock down (down to 1/20 speed) so you can line up hops and
+ * on each tick. Recording slows the clock down (scroll wheel, down to 1/100 speed) so you can line up hops and
  * throws; playback runs the same ticks at full speed. The house is rebuilt from the same seed
  * and the game's randomness is seeded, so it comes out the same every time.
  *
- * Y: open / close TAS mode   [ ]: slower / faster   U: record / stop   I: play back
+ * Y: open / close TAS mode   scroll or [ ]: slower / faster   U: record / stop   I: play back
  * \ : freeze   . : advance one tick while frozen   (Save / Load buttons in the panel)
  */
 import * as THREE from 'three';
@@ -15,7 +15,8 @@ import * as THREE from 'three';
 export const TICK = 1 / 60;
 const VIEW_W = 260; // the rear view, top right (CSS pixels)
 const VIEW_H = 160;
-const SPEEDS = [0.05, 0.1, 0.25, 0.5, 1];
+const MIN_SPEED = 0.01; // 1/100 speed
+const SNAP = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1];
 const KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyC', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const EVENTS = ['interact', 'drop', 'primary', 'toggleFlashlight'];
 const round = (v) => Math.round(v * 1e5) / 1e5;
@@ -61,6 +62,7 @@ export class TAS {
     this.rear.rotation.order = 'YXZ';
     this.buildPanel();
     document.addEventListener('keydown', (e) => this.onKey(e), true);
+    document.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
   }
 
   /** True while the clock is ours (recording or playing back). */
@@ -141,9 +143,23 @@ export class TAS {
     this.refresh();
   }
 
+  /** [ ] step through the presets; the scroll wheel changes it smoothly (see onWheel). */
   setSpeed(d) {
-    const i = Math.max(0, Math.min(SPEEDS.length - 1, SPEEDS.indexOf(this.speed) + d));
-    this.speed = SPEEDS[i];
+    let i = SNAP.findIndex((v) => v >= this.speed - 1e-9);
+    if (i < 0) i = SNAP.length - 1;
+    // On a preset: step to the next one. Between two (after scrolling): go to the one above or below.
+    const exact = Math.abs(SNAP[i] - this.speed) < 1e-9;
+    this.speed = SNAP[Math.max(0, Math.min(SNAP.length - 1, exact ? i + d : d < 0 ? i - 1 : i))];
+    this.refresh();
+  }
+
+  onWheel(e) {
+    if (!this.on) return;
+    e.preventDefault();
+    // Scroll up = faster, down = slower, about 12% a notch, from 1/100 speed to full.
+    const f = Math.pow(1.12, -Math.sign(e.deltaY));
+    this.speed = Math.min(1, Math.max(MIN_SPEED, this.speed * f));
+    if (Math.abs(this.speed - 1) < 0.02) this.speed = 1;
     this.refresh();
   }
 
@@ -173,7 +189,7 @@ export class TAS {
     this.begin('recording');
     this.ticks = [];
     this.house = this.game.seed;
-    this.game.toast(`Recording at ${this.speed}x. U to stop.`, 2000);
+    this.game.toast(`Recording at ${this.speed.toFixed(3)}x. U to stop.`, 2000);
     this.refresh();
   }
 
@@ -337,10 +353,10 @@ export class TAS {
     const modeText = { idle: 'IDLE', recording: '<b style="color:#ff5a5a">● RECORDING</b>', playing: '<b style="color:#4cd964">▶ PLAYING</b>' }[this.mode];
     this.info.innerHTML = [
       `<b>TAS</b> · ${modeText}${this.frozen ? ' · <b>FROZEN</b>' : ''}`,
-      `Record speed: <b>${this.speed}x</b> ( [ ] )`,
+      `Record speed: <b>${this.speed >= 0.1 ? this.speed.toFixed(2) : this.speed.toFixed(3)}x</b> (scroll or [ ])`,
       `Run: ${this.ticks.length} ticks · ${t(this.ticks.length)} s${this.house ? ` · house #${this.house}` : ''}`,
       this.mode === 'playing' ? `At: ${t(this.pos)} s` : this.mode === 'recording' ? `Time: ${t(this.pos)} s` : '',
-      '<span style="opacity:.7">U record/stop · I play · \\ freeze · . step · Y leave</span>',
+      '<span style="opacity:.7">scroll speed · U record/stop · I play · \\ freeze · . step · Y leave</span>',
     ].filter(Boolean).join('<br>');
   }
 }
