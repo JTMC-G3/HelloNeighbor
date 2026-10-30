@@ -219,6 +219,9 @@ class Game {
     this.playTime = 0;
     this.catches = 0;
     this.stunned = 0;
+    this.surfAt = 0; // (timers measured against game time, which TAS restarts at 0)
+    this.grabCooldown = 0;
+    this.fenceToast = 0;
     this.hideAnim = null;
     this.pulledFrom = null;
     this.catcher = null;

@@ -54,7 +54,11 @@ export class TAS {
     for (const name of EVENTS) {
       this.orig[name] = game[name].bind(game);
       game[name] = (...a) => {
-        if (this.mode === 'recording') this.pending.push([name, round(game.player.yaw), round(game.player.pitch)]);
+        if (this.mode === 'recording') {
+          // (Where the camera was too: throws and drops start from it, and it's smoothed, so it isn't just yaw and pitch.)
+          const c = game.camera.position;
+          this.pending.push([name, round(game.player.yaw), round(game.player.pitch), round(c.x), round(c.y), round(c.z)]);
+        }
         return this.orig[name](...a);
       };
     }
@@ -297,11 +301,15 @@ export class TAS {
       this.pos = this.ticks.length;
     } else if (this.mode === 'playing') {
       const [keys, yaw, pitch, events] = this.ticks[this.pos++];
-      for (const [name, y, pt] of events) {
+      for (const [name, y, pt, cx, cy, cz] of events) {
+        const camY = p.camY;
         p.yaw = y;
         p.pitch = pt;
         p.syncCamera(0);
+        if (cx !== undefined) g.camera.position.set(cx, cy, cz);
+        g.camera.updateMatrixWorld(true);
         this.orig[name]();
+        p.camY = camY; // (leave the camera smoothing as the recording had it)
       }
       p.keys.clear();
       if (keys) for (const k of keys.split(',')) p.keys.add(k);
