@@ -4,7 +4,7 @@
  * The game is stepped in fixed 1/60 s ticks while a TAS is being recorded or played, so a run
  * is just the keys held, where you were looking and the one-off actions (E, throw, drop, torch)
  * on each tick. Recording slows the clock down (scroll wheel, down to 1/100 speed) so you can line up hops and
- * throws; playback runs the same ticks at full speed. The house is rebuilt from the same seed
+ * throws; playback runs the same ticks at any speed (1/100x to 4x). The house is rebuilt from the same seed
  * and the game's randomness is seeded, so it comes out the same every time.
  *
  * Y: open / close TAS mode   scroll or [ ]: slower / faster   U: record / stop   I: play back
@@ -16,7 +16,8 @@ export const TICK = 1 / 60;
 const VIEW_W = 260; // the rear view, top right (CSS pixels)
 const VIEW_H = 160;
 const MIN_SPEED = 0.01; // 1/100 speed
-const SNAP = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1];
+const MAX_PLAY = 4; // playback can also be sped up
+const SNAP = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1, 2, 4];
 const KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyC', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
 const EVENTS = ['interact', 'drop', 'primary', 'toggleFlashlight'];
 const round = (v) => Math.round(v * 1e5) / 1e5;
@@ -36,7 +37,8 @@ export class TAS {
     this.game = game;
     this.on = false; // panel open
     this.mode = 'idle'; // idle | recording | playing
-    this.speed = 0.25;
+    this.speed = 0.25; // recording speed
+    this.playSpeed = 1; // playback speed
     this.ticks = []; // [keys, yaw, pitch, events]
     this.house = null; // the seed the recording belongs to
     this.pending = [];
@@ -145,21 +147,31 @@ export class TAS {
 
   /** [ ] step through the presets; the scroll wheel changes it smoothly (see onWheel). */
   setSpeed(d) {
-    let i = SNAP.findIndex((v) => v >= this.speed - 1e-9);
-    if (i < 0) i = SNAP.length - 1;
+    const play = this.mode === 'playing';
+    const cur = play ? this.playSpeed : this.speed;
+    const snaps = play ? SNAP : SNAP.filter((v) => v <= 1);
+    let i = snaps.findIndex((v) => v >= cur - 1e-9);
+    if (i < 0) i = snaps.length - 1;
     // On a preset: step to the next one. Between two (after scrolling): go to the one above or below.
-    const exact = Math.abs(SNAP[i] - this.speed) < 1e-9;
-    this.speed = SNAP[Math.max(0, Math.min(SNAP.length - 1, exact ? i + d : d < 0 ? i - 1 : i))];
+    const exact = Math.abs(snaps[i] - cur) < 1e-9;
+    const next = snaps[Math.max(0, Math.min(snaps.length - 1, exact ? i + d : d < 0 ? i - 1 : i))];
+    if (play) this.playSpeed = next;
+    else this.speed = next;
     this.refresh();
   }
 
   onWheel(e) {
     if (!this.on) return;
     e.preventDefault();
-    // Scroll up = faster, down = slower, about 12% a notch, from 1/100 speed to full.
+    // Scroll up = faster, down = slower, about 12% a notch. While a recording plays back it changes
+    // the playback speed (1/100x to 4x); otherwise the speed you record at (1/100x to 1x).
     const f = Math.pow(1.12, -Math.sign(e.deltaY));
-    this.speed = Math.min(1, Math.max(MIN_SPEED, this.speed * f));
-    if (Math.abs(this.speed - 1) < 0.02) this.speed = 1;
+    const play = this.mode === 'playing';
+    let v = (play ? this.playSpeed : this.speed) * f;
+    v = Math.min(play ? MAX_PLAY : 1, Math.max(MIN_SPEED, v));
+    if (Math.abs(v - 1) < 0.02) v = 1;
+    if (play) this.playSpeed = v;
+    else this.speed = v;
     this.refresh();
   }
 
@@ -204,7 +216,7 @@ export class TAS {
     }
     if (!this.allowed()) return;
     this.begin('playing');
-    this.game.toast('Playing back at full speed.', 1500);
+    this.game.toast(`Playing back at ${this.playSpeed}x (scroll to change).`, 1800);
     this.refresh();
   }
 
@@ -233,8 +245,8 @@ export class TAS {
       g.frame();
       return;
     }
-    const scale = this.mode === 'playing' ? 1 : this.speed;
-    this.acc = Math.min(TICK * 8, this.acc + real * scale);
+    const scale = this.mode === 'playing' ? this.playSpeed : this.speed;
+    this.acc = Math.min(TICK * 10, this.acc + real * scale);
     let n = 0;
     if (this.frozen) {
       this.acc = 0;
@@ -243,7 +255,7 @@ export class TAS {
         n = 1;
       }
     } else {
-      while (this.acc >= TICK && n < 6) {
+      while (this.acc >= TICK && n < 10) {
         this.acc -= TICK;
         n++;
       }
@@ -350,10 +362,12 @@ export class TAS {
 
   refresh() {
     const t = (n) => (n * TICK).toFixed(3);
+    const fmt = (v) => (v >= 0.1 ? v.toFixed(2) : v.toFixed(3));
     const modeText = { idle: 'IDLE', recording: '<b style="color:#ff5a5a">● RECORDING</b>', playing: '<b style="color:#4cd964">▶ PLAYING</b>' }[this.mode];
     this.info.innerHTML = [
       `<b>TAS</b> · ${modeText}${this.frozen ? ' · <b>FROZEN</b>' : ''}`,
-      `Record speed: <b>${this.speed >= 0.1 ? this.speed.toFixed(2) : this.speed.toFixed(3)}x</b> (scroll or [ ])`,
+      `Record speed: <b>${fmt(this.speed)}x</b>${this.mode === 'playing' ? '' : ' (scroll or [ ])'}`,
+      `Playback speed: <b>${fmt(this.playSpeed)}x</b>${this.mode === 'playing' ? ' (scroll or [ ])' : ''}`,
       `Run: ${this.ticks.length} ticks · ${t(this.ticks.length)} s${this.house ? ` · house #${this.house}` : ''}`,
       this.mode === 'playing' ? `At: ${t(this.pos)} s` : this.mode === 'recording' ? `Time: ${t(this.pos)} s` : '',
       '<span style="opacity:.7">scroll speed · U record/stop · I play · \\ freeze · . step · Y leave</span>',
